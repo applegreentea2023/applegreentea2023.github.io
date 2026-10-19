@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-Hant">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IPA 發音表（自動登入）</title>
+<style>body{font-family:-apple-system,system-ui,"PingFang HK",sans-serif;padding:2em;text-align:center;color:#333}</style>
+<p>正在登入 IPA 資源…</p>
+<form id="f" method="post" action="https://www.ipa.edu.hk/OnlineResources/login.php?rdr=/ipa.php">
+  <input type="hidden" name="code" value="IPA">
+  <button type="submit">手動登入</button>
+</form>
+<script>document.getElementById('f').submit()</script>
+</html>
