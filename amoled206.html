@@ -793,7 +793,7 @@ function drawChick(t, poseArg, stageArg, cxArg, cyArg) {
   ctx.save();
   ctx.translate(cx, cy + bob * PX);                 /* 原點 = 腳底中心 */
 
-  if (stage === 'egg') { drawEggPose(t, pose); ctx.restore(); return; }
+  if (stage === 'egg') { ctx.translate(0, -74); drawEggPose(t, pose); ctx.restore(); return; }
 
   if (pose === 'walk') { ctx.translate(0, -PX * 2); ctx.rotate(0.05); }
 
@@ -882,9 +882,10 @@ function poopPile(dx, y, deviceOffset) {
 
 /* 蛋嘅四個階段：egg / wiggle / crack / hatch */
 function drawEggPose(t, pose) {
-  const wob = pose === 'wiggle' || pose === 'crack' ? Math.sin(t / 90) * 0.10
+  const wob = pose === 'wiggle' ? Math.sin(t / 90) * 0.10
+            : pose === 'crack' ? Math.sin(t / 120) * 0.06
             : pose === 'hatch' ? Math.sin(t / 60) * 0.16
-            : Math.sin(t / 800) * 0.03;
+            : 0;                                   /* 靜止蛋：完全唔搖 */
   ctx.rotate(wob);
 
   if (pose === 'hatch') {                                /* 下半殼 + 小雞冒出 */
@@ -1118,6 +1119,14 @@ function tamaAI(dt, petObj) {
   } else p.starveT = 0;
   if (yearsOf(p) >= TAMA.LIFESPAN - Math.min(10, p.mistakes)) { die(p, 'old age'); return; }
 
+  /* 蛋：坐定定喺中間，唔行唔轉身；只喺臨孵先搖／裂 */
+  if (p.stage === 'egg') {
+    const left = TAMA.HATCH - p.age_sec;
+    p.x = W / 2; p.animT = 0;
+    p.anim = left < 15 ? 'crack' : (left < 60 ? 'wiggle' : 'idle');
+    return;
+  }
+
   /* 動作 */
   if (p.sleeping) { p.anim = 'sleep'; return; }
   p.animT += dt;
@@ -1243,10 +1252,16 @@ function drawGrave(t, p) {
   txt('tap / B = new egg', W / 2, 430, 12.5, '#0A84FF', 'center', 'middle', '600');
 }
 
+/* 0 = 光，1 = 全黑（測試同繪圖共用） */
+function nightDim(p) {
+  if (p.lights) return 0;
+  return p.sleeping ? 0.82 : 0.62;
+}
+
 function drawTama(t) {
   const p = pet;
 
-  const night = p.sleeping || !p.alive;
+  const night = p.sleeping || !p.alive || !p.lights;
   const sky = ctx.createLinearGradient(0, 50, 0, 360);
   sky.addColorStop(0, night ? '#07080F' : '#0B1220');
   sky.addColorStop(1, night ? '#101322' : '#1B2E44');
@@ -1260,6 +1275,18 @@ function drawTama(t) {
   txt(String(Math.floor(p.clock / 60)).padStart(2, '0') + ':' +
       String(p.clock % 60).padStart(2, '0'), W - 14, 66, 13, C_DIM, 'right');
   txt(p.weight + 'g', W - 14, 88, 12, C_DIM, 'right');
+  /* 燈泡：開 = 黃 + 光暈，關 = 灰 */
+  const bx = W - 68, by = 66;
+  if (p.lights) {
+    const gl = ctx.createRadialGradient(bx, by, 1, bx, by, 12);
+    gl.addColorStop(0, 'rgba(255,217,61,.55)'); gl.addColorStop(1, 'rgba(255,217,61,0)');
+    ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(bx, by, 12, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.fillStyle = p.lights ? '#FFD93D' : '#3A3A3E';
+  ctx.beginPath(); ctx.arc(bx, by, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillRect(bx - 2.5, by + 5, 5, 2.5);
+  ctx.fillStyle = p.lights ? '#B08A15' : '#2A2A2E';
+  ctx.fillRect(bx - 2, by + 7.5, 4, 1.5);
 
   txt('HUNGER', 14, 82, 9.5, C_DIM, 'left', 'middle');
   for (let i = 0; i < 4; i++) uiHeart(62 + i * 19, 76, i < heartCount(p.hunger));
@@ -1271,6 +1298,17 @@ function drawTama(t) {
   if (p.discipline > 0) rr(180, 98, 54 * p.discipline / 100, 8, 4, '#FFD60A');
 
   /* 地上大便 */
+  /* 關燈：全畫面壓暗，只留寵物身邊一圈光 */
+  const dim = nightDim(p);
+  if (dim > 0) {
+    ctx.fillStyle = 'rgba(0,0,6,' + dim + ')';
+    ctx.fillRect(0, 0, W, H);
+    const g = ctx.createRadialGradient(p.x, 320, 8, p.x, 320, 130);
+    g.addColorStop(0, 'rgba(120,170,255,' + (0.16 * dim).toFixed(2) + ')');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 150, W, H - 150);
+  }
+
   if (p.poop && poseOf(p) !== 'poop') {
     ctx.save(); ctx.translate(W - 78, 372);
     for (let i = 0; i < p.poop; i++) { ctx.save(); ctx.translate(i * 15, 0); pojPile(0, 0); ctx.restore(); }
@@ -1313,9 +1351,9 @@ function drawTama(t) {
   }
 
   if (p.submenu === 'feed') {
-    uiButton(18, 322, 116, 46, 'MEAL', false);
-    uiButton(147, 322, 116, 46, 'SNACK', false);
-    uiButton(276, 322, 116, 46, 'BACK', false);
+    uiButton(14, 318, 122, 48, 'MEAL +1♥', false);
+    uiButton(144, 318, 122, 48, 'SNACK ♥', false);
+    uiButton(274, 318, 122, 48, 'BACK', false);
   }
 
   /* toast：每個動作嘅即時回饋 */
@@ -1514,10 +1552,14 @@ Object.assign(appImpl, {
       if (!p.alive) { newEgg(); return; }
       if (p.game) { gameTap(x, y); return; }
       if (p.showStatus) { p.showStatus = false; return; }
-      if (p.submenu === 'feed' && y > 322 && y < 368) {
-        if (x < 134) doMeal();
-        else if (x < 263) doSnack();
-        else p.submenu = '';
+      if (p.submenu === 'feed') {
+        if (y > 316 && y < 370) {
+          if (x < 140) doMeal();
+          else if (x < 270) doSnack();
+          else p.submenu = '';
+          return;
+        }
+        p.submenu = '';                 /* 點其他地方 = 收埋子選單 */
         return;
       }
       if (y >= 408 && y <= 468) {
@@ -2245,7 +2287,20 @@ function runTests() {
   pet.hunger = 40;
   tapCv(32, 438);                      /* FEED */
   ok(pet.submenu === 'feed', 'tap FEED opens MEAL/SNACK submenu');
+  tapCv(76, 345);                      /* MEAL 按鈕 */
+  ok(pet.hunger === 65, 'tap MEAL button feeds +1 heart');
+  ok(pet.submenu === '', 'submenu closes after meal');
   pet.submenu = '';
+
+  /* 蛋唔會郁 */
+  petInit(pet); pet.stage = 'egg'; pet.age_sec = 100; pet.x = 120;
+  for (let i = 0; i < 300; i++) tamaAI(1, pet);
+  ok(pet.x === 205 && pet.stage === 'egg', 'egg stays centred, does not walk');
+
+  /* 關燈畫面要變暗 */
+  petInit(pet); pet.stage = 'child'; pet.age_sec = 4300;
+  pet.lights = false;
+  ok(nightDim(pet) > 0.3, 'lights off dims the screen');
 
   appImpl.set.draw();
   ok(appImpl.set._rows.length >= 5, 'Settings root has WLAN/Sound/Display/Power/Storage/About');
@@ -2321,6 +2376,7 @@ const POSES = ['egg', 'wiggle', 'crack', 'hatch', 'idle', 'happy', 'walk', 'slee
 const SHEET = q.get('tpose') === 'all';
 if (!SHEET && q.get('tpose')) pet.poseOverride = q.get('tpose');
 
+if (q.get('tlights') === '0') pet.lights = false;     /* ?tlights=0 預覽關燈 */
 if (q.get('tdead') === '1') {                        /* ?tdead=1 預覽死亡畫面 */
   pet.alive = false; pet.stage = 'dead'; pet.deathReason = q.get('why') || 'old age';
   pet.deathAge = +(q.get('age') || 9); pet.deathWeight = +(q.get('wt') || 34);
