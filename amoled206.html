@@ -98,9 +98,9 @@
   </div>
   <div class="row">
     <span class="k">時間</span>
-    <button class="ctl" data-speed="1" aria-pressed="true">×1</button>
+    <button class="ctl" data-speed="1">×1</button>
     <button class="ctl" data-speed="10">×10</button>
-    <button class="ctl" data-speed="60">×60</button>
+    <button class="ctl" data-speed="60" aria-pressed="true">×60</button>
     <button class="ctl" id="home">⌂ Home</button>
     <button class="ctl" id="wipe">清 NVS</button>
   </div>
@@ -158,7 +158,7 @@ let mode = 'home';          /* home | app | recents */
 let page = 0;
 let powered = true, download = false;
 let bootDown = false, pwrDownAt = 0;
-let speed = 1;
+let speed = 60;               /* demo 預設 1 真秒 = 1 寵物分鐘 */
 let brightness = 100, volume = 60;
 let battery = 87;
 const running = [];         /* 最近用過，最多 3 個（CORE_MANAGER max_running_num = 3） */
