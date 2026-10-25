@@ -201,29 +201,29 @@ const pet = {
 };
 const clamp = v => v < 0 ? 0 : (v > PET_FULL ? PET_FULL : v);
 function petInit(p) {
-  Object.assign(p, { hunger: 80, happy: 80, energy: 80, starve: 0, acc: 0, age_sec: 0,
-                     sleeping: false, alive: true, x: 205, dir: 1, anim: 'idle', animT: 0,
-                     blink: 0, poop: 0, poopT: 0, stage: 'egg', bubble: '', bubbleT: 0,
-                     sick: false, poseOverride: '', anim2: '' });
+  Object.assign(p, {
+    hunger: 100, happy: 100, energy: 100,
+    age_sec: 0, sleeping: false, alive: true,
+    x: 205, dir: 1, anim: 'idle', animT: 0, blink: 0,
+    poop: 0, poopT: 0, stage: 'egg', bubble: '', bubbleT: 0,
+    sick: false, poseOverride: '',
+    weight: 5, discipline: 0, mistakes: 0, call: '', callT: 0,
+    lights: true, clock: 540, branch: '', sickT: 0, sickDoses: 0, sickDone: false,
+    misbehaving: false, menu: 0, submenu: '', showStatus: false, game: null,
+    deathReason: '', deathAge: 0, deathWeight: 0, hAcc: 0, pAcc: 0, starveT: 0,
+  });
 }
 
 function petTick(p, dt) {
   if (!p.alive) return;
   p.age_sec += dt;
-  p.acc += dt;
-  while (p.acc >= PET_DECAY_SEC) {
-    p.acc -= PET_DECAY_SEC;
-    if (p.sleeping) { p.energy = clamp(p.energy + 2); p.hunger = clamp(p.hunger - 1); }
-    else            { p.hunger = clamp(p.hunger - 1); p.energy = clamp(p.energy - 1); }
-    if (p.hunger === 0) {
-      p.happy = clamp(p.happy - 1);
-      if (++p.starve >= PET_STARVE_STEPS) p.alive = false;
-    } else {
-      p.starve = 0;
-      if (p.hunger > 60 && p.energy > 40) p.happy = clamp(p.happy + 1);
-    }
-  }
+  p.hAcc = (p.hAcc || 0) + dt;
+  while (p.hAcc >= TAMA.HUNGER_STEP) { p.hAcc -= TAMA.HUNGER_STEP; p.hunger = clamp(p.hunger - 1); }
+  p.pAcc = (p.pAcc || 0) + dt;
+  while (p.pAcc >= TAMA.HAPPY_STEP) { p.pAcc -= TAMA.HAPPY_STEP; p.happy = clamp(p.happy - 1); }
+  if (p.sleeping) p.energy = clamp(p.energy + 2);
 }
+
 function petFeed(p)  { if (!p.alive || p.sleeping || p.hunger >= PET_FULL) return false;
                        p.hunger = clamp(p.hunger + 25); p.happy = clamp(p.happy + 5);
                        p.energy = clamp(p.energy - 2); p.starve = 0; return true; }
@@ -635,97 +635,6 @@ function drawSettings(app) {
   ctx.restore();
 }
 
-/* ═══════════════════════════ Tamagotchi 引擎：進化 / 動作 / 行路（真機版同一個狀態機）
- * stage 門檻用「app 內年齡」，×60 加速時 8 秒睇到成世
- * 進化需要乾淨（poop === 0），冇清屎會卡住唔進化 */
-const STAGE_GATE = { egg: 0, baby: 20, child: 90, teen: 240, adult: 480 };
-const STAGE_LABEL = { egg: 'EGG', baby: 'BABY', child: 'CHILD', teen: 'TEEN', adult: 'ADULT', dead: 'DEAD' };
-
-function stageOf(p) {
-  if (!p.alive) return 'dead';
-  if (p.poop > 1) return p.stage;                     /* 唔乾淨就唔進化 */
-  if (p.age_sec >= STAGE_GATE.adult) return 'adult';
-  if (p.age_sec >= STAGE_GATE.teen)  return 'teen';
-  if (p.age_sec >= STAGE_GATE.child) return 'child';
-  if (p.age_sec >= STAGE_GATE.baby)  return 'baby';
-  return 'egg';
-}
-
-/* 由狀態決定播邊個 pose（12 個） */
-function poseOf(p) {
-  if (p.poseOverride) return p.poseOverride;
-  if (!p.alive) return 'dead';
-  if (p.stage === 'egg') return p.anim === 'hatch' ? 'hatch' : (p.anim === 'crack' ? 'crack' : (p.anim === 'wiggle' ? 'wiggle' : 'egg'));
-  if (p.sleeping) return 'sleep';
-  if (p.sick) return 'sick';
-  if (p.happy < 15) return 'cry';
-  if (p.anim === 'eat') return 'eat';
-  if (p.anim === 'play') return 'happy';
-  if (p.anim === 'poop') return 'poop';
-  if (p.anim === 'hatch') return 'hatch';
-  if (p.anim === 'walk') return 'walk';
-  return 'idle';
-}
-
-function tamaSay(s, secs) { pet.bubble = s; pet.bubbleT = secs || 1.6; }
-
-/* 每 frame 推進一步：動作揀選、行走、大便、進化 */
-function tamaAI(dtms) {
-  const p = pet;
-  const dt = Math.min(0.25, dtms / 1000);
-
-  p.bubbleT = Math.max(0, p.bubbleT - dt);
-  p.blink = Math.max(0, p.blink - dt);
-
-  if (!p.alive) { p.anim = 'dead'; return; }
-
-  const st = stageOf(p);
-  if (st !== p.stage) {
-    p.stage = st;
-    if (st === 'baby') { p.anim = 'hatch'; p.animT = 0; tamaSay('♪', 2); }
-    else { p.anim = 'evo'; p.animT = 0; tamaSay('★', 2); }
-    I('evolve -> ' + st + ' @' + Math.round(p.age_sec) + 's');
-  }
-
-  /* 病：環境唔乾淨或者餓親 */
-  const wasSick = p.sick;
-  p.sick = (p.poop >= 2) || (p.hunger < 12);
-  if (p.sick && !wasSick) { W_('pet is sick'); tamaSay('!', 1.5); }
-  if (!p.sick && wasSick) I('recovered');
-
-  /* 自動睡：體力低 */
-  if (!p.sleeping && p.energy === 0 && p.anim !== 'sleep') { p.sleeping = true; W_('exhausted -> sleep'); }
-  if (p.sleeping) { p.anim = 'sleep'; p.animT += dt; return; }
-
-  p.animT += dt;
-  const busy = p.anim === 'eat' || p.anim === 'play' || p.anim === 'hatch' || p.anim === 'evo' || p.anim === 'sick';
-  if (busy) {
-    if (p.animT > 2.0) { p.anim = 'idle'; p.animT = 0; }
-  } else if (p.anim === 'walk') {
-    p.x += p.dir * 30 * dt * (p.stage === 'baby' ? 0.7 : 1);
-    if (p.x < 52) { p.x = 52; p.dir = 1; }
-    if (p.x > 358) { p.x = 358; p.dir = -1; }
-    if (p.animT > 2.5 + Math.random() * 3) { p.anim = 'idle'; p.animT = 0; }
-  } else if (p.animT > 1.0 + Math.random() * 2.0) {
-    p.anim = Math.random() < 0.62 ? 'walk' : 'idle';
-    p.animT = 0;
-    if (p.anim === 'walk') p.dir = Math.random() < 0.5 ? -1 : 1;
-  }
-
-  if (Math.random() < dt * 0.4) p.blink = 0.13;
-
-  /* 大便：定時生產，poop>=2 會扣開心，唔清就唔進化 */
-  p.poopT += dt;
-  if (p.poopT > 40 && p.poop < 3) {
-    p.poop++; p.poopT = 0;
-    p.happy = clamp(p.happy - 6);
-    p.anim = 'poop'; p.animT = 0;
-    tamaSay('…', 1.2);
-    I('poop on the floor (' + p.poop + ')');
-  }
-}
-
-/* ───────────────────────────────────────── 畫：場景 → 大便 → 寵物 → UI */
 /* ══════════════ 像素角色（照用戶提供嘅原畫：橙黃小雞 + 呆毛觸角 + 米色肚 + 腮紅）
  * 用「art pixel」座標畫，1 art px = PX device px，邊緣逐行 span 令佢有像素階梯感
  * 12 個狀態：egg / wiggle / crack / hatch / idle / happy / walk / sleep / eat / cry / poop / sick
@@ -1009,52 +918,485 @@ function drawPoop(x, y, n) {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Tamagotchi 育成系統（對齊原裝 P1，取代舊版簡化引擎）
+ *  · 4 心制：hunger / happy（內部 0..100，1 心 = 25）
+ *  · care mistakes：叫咗你 15 分鐘唔理就記一次，決定進化分支
+ *  · 紀律（SCOLD）、體重（meal+1/snack+2/game-1）、每階段病一次、便便上限 4
+ *  · 日夜：按寵物時鐘入睡（冇得叫醒），入睡時未關燈會 call
+ *  · 進化：蛋 → baby → child → teen → adult，adult 分 good/average/bad
+ * 時間全部係「寵物秒」；UI 嘅 ×1/×10/×60 就係倍率（demo 用 ×60）
+ * ═══════════════════════════════════════════════════════════════════════════ */
+const TAMA = {
+  HEART: 25,
+  HUNGER_STEP: 72,                    /* 1 心 ≈ 30 寵物分鐘 */
+  HAPPY_STEP: 80,
+  HATCH: 300,                         /* 蛋 5 分鐘 */
+  CHILD_AT: 3900,                     /* 孵化後 65 分鐘 */
+  YEAR: 1800,                         /* 1 歲 = 30 寵物分鐘 */
+  TEEN_AGE: 3, ADULT_AGE: 6,
+  CALL_WINDOW: 900,                   /* 15 分鐘唔理 = 1 次失誤 */
+  MISBEHAVE_GAP: 1500,
+  POOP_EVERY: { baby: 900, child: 1500, teen: 2700, adult: 5400 },
+  POOP_MAX: 4,
+  CURE_DOSES: 3,
+  SICK_DEATH: 3600,
+  STARVE_DEATH: 3600,
+  SLEEP_AT: { baby: 20, child: 21, teen: 21, adult: 22 },
+  BASE_WEIGHT: { baby: 5, child: 10, teen: 20, adult: 30 },
+  LIFESPAN: 24,
+};
+const CALL_LABEL = { hungry: 'HUNGRY', sad: 'UNHAPPY', light: 'LIGHTS', brat: 'BRAT' };
+const STAGE_LABEL = { egg: 'EGG', baby: 'BABY', child: 'CHILD', teen: 'TEEN', adult: 'ADULT', dead: 'DEAD' };
+const MENU = ['FEED', 'PLAY', 'DUCK', 'LIGHT', 'SCOLD', 'MED', 'STATUS'];
+
+const heartCount = v => Math.ceil(v / TAMA.HEART);
+const yearsOf = p => Math.floor(p.age_sec / TAMA.YEAR);
+const clockHM = p => (9 * 60 + Math.floor(p.age_sec / 60)) % 1440;
+
+function stageOf(p) {
+  if (!p.alive) return 'dead';
+  if (p.age_sec < TAMA.HATCH) return 'egg';
+  if (p.age_sec < TAMA.HATCH + TAMA.CHILD_AT) return 'baby';
+  if (yearsOf(p) < TAMA.TEEN_AGE) return 'child';
+  if (yearsOf(p) < TAMA.ADULT_AGE) return 'teen';
+  return 'adult';
+}
+
+function careScore(p) {
+  return p.mistakes * 10 + Math.round((100 - p.discipline) / 10) +
+         Math.max(0, Math.round((p.weight - TAMA.BASE_WEIGHT.adult) / 4));
+}
+function branchFor(p) {
+  const s = careScore(p);
+  return s <= 6 ? 'good' : (s <= 14 ? 'average' : 'bad');
+}
+
+function poseOf(p) {
+  if (p.poseOverride) return p.poseOverride;
+  if (!p.alive) return 'dead';
+  if (p.stage === 'egg') {
+    return p.anim === 'hatch' ? 'hatch' : (p.anim === 'crack' ? 'crack'
+         : (p.anim === 'wiggle' ? 'wiggle' : 'egg'));
+  }
+  if (p.sleeping) return 'sleep';
+  if (p.sick) return 'sick';
+  if (p.happy < 15) return 'cry';
+  if (p.anim === 'eat') return 'eat';
+  if (p.anim === 'play') return 'happy';
+  if (p.anim === 'poop') return 'poop';
+  if (p.anim === 'walk') return 'walk';
+  return 'idle';
+}
+
+function tamaSay(s, secs) { pet.bubble = s; pet.bubbleT = secs || 1.6; }
+
+function raiseCall(p, reason) {
+  if (p.call || !p.alive || p.stage === 'egg') return;
+  p.call = reason; p.callT = 0;
+  tamaSay('!', 2);
+  I('call: ' + reason);
+}
+function clearCall(p, by) {
+  if (!p.call) return;
+  I('call answered: ' + p.call + (by ? ' (' + by + ')' : ''));
+  p.call = ''; p.callT = 0; p.misbehaving = false;
+}
+function addMistake(p, why) {
+  p.mistakes = Math.min(99, p.mistakes + 1);
+  W_('care mistake #' + p.mistakes + ' (' + why + ')');
+  tamaSay('!', 1.2);
+}
+function die(p, why) {
+  p.alive = false; p.anim = 'dead'; p.sleeping = false; p.call = ''; p.game = null;
+  p.deathReason = why; p.deathAge = yearsOf(p); p.deathWeight = p.weight;
+  E_('died: ' + why + ' @' + p.deathAge + 'y ' + p.deathWeight + 'g, mistakes ' + p.mistakes);
+  savePet();
+}
+
+/* 每個寵物秒推一次 */
+function tamaAI(dt, petObj) {
+  const p = petObj || pet;
+  if (!p.alive) { p.anim = 'dead'; return; }
+
+  p.bubbleT = Math.max(0, p.bubbleT - dt);
+  p.blink = Math.max(0, p.blink - dt);
+  p.clock = clockHM(p);
+  const hour = p.clock / 60;
+  const sleepAt = TAMA.SLEEP_AT[p.stage] || 22;
+  const shouldSleep = p.stage !== 'egg' && (hour >= sleepAt || hour < 9);
+
+  /* 進化 */
+  const st = stageOf(p);
+  if (st !== p.stage) {
+    const fromEgg = p.stage === 'egg';
+    p.stage = st;
+    if (st === 'adult') p.branch = branchFor(p);
+    p.mistakes = 0;                       /* 原裝：進化後失誤歸零 */
+    p.sick = false; p.sickT = 0; p.sickDoses = 0; p.sickDone = false;
+    p.weight = Math.max(p.weight, TAMA.BASE_WEIGHT[st] || 5);
+    p.anim = (fromEgg || st === 'baby') ? 'hatch' : 'evo';
+    p.animT = 0;
+    tamaSay('★', 2);
+    I('evolve -> ' + st + (st === 'adult' ? ' [' + p.branch + ']' : '') +
+      ' (' + yearsOf(p) + 'y ' + Math.floor(p.age_sec / 60) + 'min)');
+  }
+
+  /* 日夜 */
+  if (shouldSleep && !p.sleeping) {
+    p.sleeping = true; p.anim = 'sleep'; p.animT = 0;
+    I('bedtime ' + sleepAt + ':00 -> asleep');
+    if (p.lights) raiseCall(p, 'light');
+  } else if (!shouldSleep && p.sleeping) {
+    p.sleeping = false; p.anim = 'idle'; p.animT = 0;
+    I('wake up -> ' + yearsOf(p) + ' years');
+  }
+
+  /* call 倒數 */
+  if (p.call) {
+    p.callT += dt;
+    if (p.callT >= TAMA.CALL_WINDOW) { addMistake(p, p.call); p.call = ''; p.callT = 0; }
+  }
+
+  /* 需要 → call / 扭計 */
+  if (!p.sleeping && !p.call) {
+    if (p.hunger <= 0) raiseCall(p, 'hungry');
+    else if (p.happy <= 0) raiseCall(p, 'sad');
+    else if (p.discipline < 100 && Math.random() < dt / TAMA.MISBEHAVE_GAP) {
+      p.misbehaving = true;
+      raiseCall(p, 'brat');
+    }
+  }
+
+  /* 便便 */
+  if (!p.sleeping && p.stage !== 'egg') {
+    p.poopT += dt;
+    if (p.poopT >= (TAMA.POOP_EVERY[p.stage] || 1500)) {
+      p.poopT = 0;
+      if (p.poop < TAMA.POOP_MAX) {
+        p.poop++;
+        p.anim = 'poop'; p.animT = 0;
+        I('poop ' + p.poop + '/' + TAMA.POOP_MAX);
+      }
+      if (p.poop >= TAMA.POOP_MAX && !p.sick) { p.sick = true; p.sickT = 0; W_('sick: poop overflow'); }
+    }
+  }
+
+  /* 每階段病一次 */
+  if (!p.sick && !p.sickDone && p.stage !== 'egg' && Math.random() < dt / 2400) {
+    p.sick = true; p.sickT = 0; p.sickDoses = 0; p.sickDone = true;
+    W_('sick (once per stage)');
+    tamaSay('!', 1.5);
+  }
+
+  /* 死因 */
+  if (p.sick) { p.sickT += dt; if (p.sickT > TAMA.SICK_DEATH) { die(p, 'sick'); return; } }
+  if (p.hunger <= 0) {
+    p.starveT += dt;
+    if (p.starveT > TAMA.STARVE_DEATH) { die(p, 'hunger'); return; }
+  } else p.starveT = 0;
+  if (yearsOf(p) >= TAMA.LIFESPAN - Math.min(10, p.mistakes)) { die(p, 'old age'); return; }
+
+  /* 動作 */
+  if (p.sleeping) { p.anim = 'sleep'; return; }
+  p.animT += dt;
+  const busy = ['eat', 'play', 'poop', 'hatch', 'evo'].includes(p.anim);
+  if (busy) {
+    if (p.animT > 2.0) { p.anim = 'idle'; p.animT = 0; }
+  } else if (p.sick) {
+    p.anim = 'sick';
+  } else if (p.anim === 'walk') {
+    if (!p.call) {
+      p.x += p.dir * 30 * dt * (p.stage === 'baby' ? 0.7 : 1);
+      if (p.x < 52) { p.x = 52; p.dir = 1; }
+      if (p.x > 358) { p.x = 358; p.dir = -1; }
+    }
+    if (p.animT > 2.5 + Math.random() * 3) { p.anim = 'idle'; p.animT = 0; }
+  } else if (p.animT > 1.0 + Math.random() * 2.0) {
+    p.anim = (Math.random() < 0.6 && !p.call) ? 'walk' : 'idle';
+    p.animT = 0;
+    if (p.anim === 'walk') p.dir = Math.random() < 0.5 ? -1 : 1;
+  }
+
+  if (Math.random() < dt * 0.02) p.blink = 0.13;
+}
+
+/* ───────────────────────────── UI：心 / 體重 / 7 icon / 小遊戲 / 死亡畫面 */
+function uiHeart(x, y, on, px) {
+  const k = px || 2;
+  const rows = [[1,0,1,1,0,1], [1,1,1,1,1,1], [1,1,1,1,1,1], [0,1,1,1,1,0], [0,0,1,1,0,0], [0,0,0,1,0,0]];
+  ctx.fillStyle = on ? '#FF5C7A' : '#3A3A3E';
+  rows.forEach((row, ry) => row.forEach((v, rx) => {
+    if (v) ctx.fillRect(x + rx * k, y + ry * k, k, k);
+  }));
+}
+
+function menuGlyph(i, cx, cy, on) {
+  const c = on ? '#00BFFF' : '#E6E6E6';
+  ctx.strokeStyle = c; ctx.fillStyle = c; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+  switch (MENU[i]) {
+    case 'FEED':
+      ctx.beginPath(); ctx.arc(cx, cy - 2, 9, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+      ctx.fillRect(cx - 10, cy - 3, 20, 2); break;
+    case 'PLAY':
+      ctx.beginPath(); ctx.arc(cx, cy, 9, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx - 9, cy); ctx.lineTo(cx + 9, cy);
+      ctx.moveTo(cx, cy - 9); ctx.lineTo(cx, cy + 9); ctx.stroke(); break;
+    case 'DUCK':
+      ctx.beginPath(); ctx.arc(cx - 2, cy - 1, 7, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx + 5, cy - 1); ctx.lineTo(cx + 11, cy + 1);
+      ctx.lineTo(cx + 5, cy + 3); ctx.closePath(); ctx.fill(); break;
+    case 'LIGHT':
+      ctx.beginPath(); ctx.arc(cx, cy - 3, 7, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillRect(cx - 4, cy + 5, 8, 4); break;
+    case 'SCOLD':
+      ctx.beginPath(); ctx.arc(cx, cy, 9, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillRect(cx - 1, cy - 5, 3, 7); ctx.fillRect(cx - 1, cy + 4, 3, 3); break;
+    case 'MED':
+      ctx.fillRect(cx - 2, cy - 9, 5, 18); ctx.fillRect(cx - 9, cy - 2, 18, 5); break;
+    case 'STATUS':
+      ctx.fillRect(cx - 8, cy + 2, 4, 7); ctx.fillRect(cx - 2, cy - 4, 4, 13);
+      ctx.fillRect(cx + 4, cy - 8, 4, 17); break;
+  }
+}
+
+function uiButton(x, y, w, h, label, on) {
+  rr(x, y, w, h, 14, on ? '#0A84FF' : '#1C1C1E');
+  txt(label, x + w / 2, y + h / 2 + 1, 16, '#fff', 'center', 'middle', '600');
+}
+
 function drawTama(t) {
   const p = pet;
-  const mood = petMood(p);
 
-  /* 天 + 地 */
+  const night = p.sleeping || !p.alive;
   const sky = ctx.createLinearGradient(0, 50, 0, 360);
-  const night = mood === 4 || !p.alive;
-  sky.addColorStop(0, night ? '#080A12' : '#0B1220');
-  sky.addColorStop(1, night ? '#12141F' : '#1B2E44');
+  sky.addColorStop(0, night ? '#07080F' : '#0B1220');
+  sky.addColorStop(1, night ? '#101322' : '#1B2E44');
   ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = '#12241C'; ctx.fillRect(0, 372, W, H - 372);
   ctx.fillStyle = '#22452F'; ctx.fillRect(0, 371, W, 2);
 
-  /* HUD */
-  txt(STAGE_LABEL[p.stage] || p.stage, 14, 66, 15, C_DIM, 'left', 'alphabetic', '600');
-  txt('AGE ' + Math.floor(p.age_sec / 60) + 'm ' + (p.age_sec % 60) + 's', W - 14, 66, 13, C_DIM, 'right');
+  /* 頂部：階段 / 時鐘 / 體重 / 心 */
+  txt(STAGE_LABEL[p.stage] + (p.stage === 'adult' ? ' · ' + (p.branch || '?') : ''),
+      14, 66, 13, C_DIM, 'left', 'alphabetic', '600');
+  txt(String(Math.floor(p.clock / 60)).padStart(2, '0') + ':' +
+      String(p.clock % 60).padStart(2, '0'), W - 14, 66, 13, C_DIM, 'right');
+  txt(p.weight + 'g', W - 14, 88, 12, C_DIM, 'right');
 
-  const names = ['FOOD', 'HAPPY', 'ENERGY'];
-  const vals = [p.hunger, p.happy, p.energy];
-  const cols = [p.hunger < 25 ? '#FF453A' : '#30D158',
-                p.happy < 25 ? '#FF453A' : '#FFD60A',
-                p.energy < 25 ? '#FF453A' : '#0A84FF'];
-  for (let i = 0; i < 3; i++) {
-    const y = 80 + i * 20;
-    txt(names[i], 14, y + 10, 11, C_DIM, 'left', 'middle');
-    rr(74, y, 278, 12, 6, '#2C2C2E');
-    if (vals[i] > 0) rr(74, y, Math.max(12, 278 * vals[i] / 100), 12, 6, cols[i]);
-  }
+  txt('HUNGER', 14, 82, 9.5, C_DIM, 'left', 'middle');
+  for (let i = 0; i < 4; i++) uiHeart(62 + i * 19, 76, i < heartCount(p.hunger));
+  txt('HAPPY', 14, 102, 9.5, C_DIM, 'left', 'middle');
+  for (let i = 0; i < 4; i++) uiHeart(62 + i * 19, 96, i < heartCount(p.happy));
 
-  /* 泡泡 */
-  if (p.bubbleT > 0 && p.bubble) {
-    const bx = Math.min(W - 40, Math.max(40, p.x));
-    txt(p.bubble, bx + 44, 372 - (p.stage === 'egg' ? 70 : 120), 22, '#fff', 'center', 'middle', '600');
+  txt('DISC', 152, 102, 8.5, C_DIM, 'left', 'middle');
+  rr(180, 98, 54, 8, 4, '#2C2C2E');
+  if (p.discipline > 0) rr(180, 98, 54 * p.discipline / 100, 8, 4, '#FFD60A');
+
+  /* 地上大便 */
+  if (p.poop && poseOf(p) !== 'poop') {
+    ctx.save(); ctx.translate(W - 78, 372);
+    for (let i = 0; i < p.poop; i++) { ctx.save(); ctx.translate(i * 15, 0); pojPile(0, 0); ctx.restore(); }
+    ctx.restore();
   }
 
   drawChick(t);
 
-  if (p.sleeping) txt('z z Z', p.x + 54, 372 - 96, 16, '#8E8E93', 'center', 'middle');
-
-  /* 掣 */
-  const labels = [p.alive ? 'FEED' : 'NEW', p.alive ? 'PLAY' : 'NEW',
-                  !p.alive ? 'NEW' : (p.sleeping ? 'WAKE' : 'SLEEP')];
-  for (let i = 0; i < 3; i++) {
-    rr(12 + i * 134, 418, 118, 62, 18, '#1C1C1E');
-    txt(labels[i], 12 + i * 134 + 59, 418 + 31, 19, '#fff', 'center', 'middle');
+  if (p.bubbleT > 0 && p.bubble) {
+    txt(p.bubble, Math.min(W - 40, Math.max(40, p.x)) + 46, 372 - 118, 22, '#fff', 'center', 'middle', '600');
   }
+
+  /* ATTENTION icon */
+  if (p.call && p.alive) {
+    const on = Math.sin(t / 220) > -0.3;
+    rr(W - 48, 322, 34, 34, 8, on ? '#FF453A' : '#5A1F1C');
+    txt('!', W - 31, 340, 21, '#fff', 'center', 'middle', '700');
+    txt(CALL_LABEL[p.call] || '', W - 14, 312, 9, '#FF453A', 'right', 'middle', '600');
+  }
+
+  /* 死亡 */
+  if (!p.alive) {
+    ctx.fillStyle = 'rgba(0,0,0,.74)'; ctx.fillRect(0, 0, W, H);
+    rr(W / 2 - 46, 248, 92, 88, 8, '#5A5A60');
+    rr(W / 2 - 53, 236, 106, 16, 6, '#6E6E75');
+    txt('R.I.P', W / 2, 296, 19, '#2A2A2E', 'center', 'middle', '700');
+    txt((p.deathAge || 0) + ' years · ' + (p.deathWeight || 0) + 'g', W / 2, 356, 13, '#fff', 'center', 'middle');
+    txt('cause: ' + (p.deathReason || '?'), W / 2, 376, 11, C_DIM, 'center', 'middle');
+    txt('tap / B = new egg', W / 2, 412, 13, '#0A84FF', 'center', 'middle', '600');
+    return;
+  }
+
+  if (p.game) { drawMiniGame(t); return; }
+
+  if (p.showStatus) {
+    ctx.fillStyle = 'rgba(0,0,0,.88)'; ctx.fillRect(0, 56, W, H - 56);
+    txt('STATUS', 24, 92, 17, '#fff', 'left', 'alphabetic', '700');
+    [['AGE', yearsOf(p) + ' years'],
+     ['WEIGHT', p.weight + ' g'],
+     ['DISCIPLINE', Math.round(p.discipline) + '%'],
+     ['CARE MISTAKES', p.mistakes],
+     ['CALL', p.call ? (CALL_LABEL[p.call] || p.call) : '—'],
+     ['BRANCH', p.branch || '—']].forEach((r, i) => {
+      txt(r[0], 24, 136 + i * 34, 12, C_DIM, 'left', 'middle');
+      txt(String(r[1]), W - 24, 136 + i * 34, 15, '#fff', 'right', 'middle');
+    });
+    txt('tap to close', W / 2, 462, 10.5, C_DIM, 'center', 'middle');
+    return;
+  }
+
+  if (p.submenu === 'feed') {
+    uiButton(18, 322, 116, 46, 'MEAL', false);
+    uiButton(147, 322, 116, 46, 'SNACK', false);
+    uiButton(276, 322, 116, 46, 'BACK', false);
+  }
+
+  /* 7 icon 菜單 */
+  const sel = p.menu || 0;
+  for (let i = 0; i < MENU.length; i++) {
+    const x = 6 + i * 57;
+    if (i === sel) rr(x, 410, 52, 56, 10, '#10222E');
+    menuGlyph(i, x + 26, 430, i === sel);
+    txt(MENU[i], x + 26, 458, 7.5, i === sel ? '#00BFFF' : C_DIM, 'center', 'middle');
+  }
+}
+
+function drawMiniGame(t) {
+  const g = pet.game;
+  ctx.fillStyle = 'rgba(4,8,14,.92)'; ctx.fillRect(0, 0, W, H);
+  txt('ROUND ' + Math.min(5, g.round + 1) + ' / 5', W / 2, 92, 16, '#fff', 'center', 'middle', '700');
+  for (let i = 0; i < 5; i++) {
+    ctx.fillStyle = i < g.wins ? '#30D158' : (i < g.round ? '#FF453A' : '#2C2C2E');
+    ctx.beginPath(); ctx.arc(W / 2 - 48 + i * 24, 118, 5, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.save(); ctx.translate(W / 2, 320);
+  chickHead(13, 'happy', t);
+  if (g.phase === 'result') {
+    pxR(g.look < 0 ? -11 : 8, -18, 4, 3, PAL.eye);
+  }
+  ctx.restore();
+
+  if (g.phase === 'guess') {
+    uiButton(22, 356, 158, 62, '◀ LEFT', false);
+    uiButton(228, 356, 158, 62, 'RIGHT ▶', false);
+  } else {
+    txt(g.result === 'win' ? 'WIN!' : 'MISS', W / 2, 388, 26,
+        g.result === 'win' ? '#30D158' : '#FF453A', 'center', 'middle', '700');
+    txt('tap to continue', W / 2, 424, 11, C_DIM, 'center', 'middle');
+  }
+  txt('wins ' + g.wins + ' · 3+ = +1 heart', W / 2, 468, 11, C_DIM, 'center', 'middle');
+}
+
+/* ───────────────────────────── 動作（7 個 icon 對應原裝菜單） */
+function menuAct(i) {
+  const p = pet;
+  const name = MENU[i];
+  if (p.sleeping && name !== 'STATUS' && name !== 'LIGHT') {
+    tamaSay('zZ', 1.2); W_(name + ' ignored: sleeping'); return;
+  }
+  if (name !== 'FEED') p.submenu = '';
+  switch (name) {
+    case 'FEED':   p.submenu = 'feed'; I('menu FEED'); break;
+    case 'PLAY':   startGame(); break;
+    case 'DUCK':   doDuck(); break;
+    case 'LIGHT':  doLight(); break;
+    case 'SCOLD':  doScold(); break;
+    case 'MED':    doMed(); break;
+    case 'STATUS': p.showStatus = true; break;
+  }
+}
+
+function doMeal() {
+  const p = pet; p.submenu = '';
+  if (p.sleeping) { tamaSay('zZ', 1.2); W_('meal ignored: sleeping'); return; }
+  if (p.misbehaving) { tamaSay('!', 1.2); W_('refuses meal (misbehaving)'); return; }
+  if (p.hunger >= 100) { tamaSay('x', 1.2); W_('refuses meal: 4 hearts full'); return; }
+  p.hunger = clamp(p.hunger + TAMA.HEART);
+  p.weight = Math.min(99, p.weight + 1);
+  if (p.call === 'hungry') clearCall(p, 'meal');
+  p.anim = 'eat'; p.animT = 0; tamaSay('♥', 1.4);
+  I('meal -> ' + heartCount(p.hunger) + '/4 hearts, ' + p.weight + 'g');
+  savePet();
+}
+
+function doSnack() {
+  const p = pet; p.submenu = '';
+  if (p.sleeping) { tamaSay('zZ', 1.2); W_('snack ignored: sleeping'); return; }
+  p.happy = clamp(p.happy + TAMA.HEART);
+  p.weight = Math.min(99, p.weight + 2);
+  if (p.call === 'sad') clearCall(p, 'snack');
+  p.anim = 'eat'; p.animT = 0; tamaSay('♪', 1.4);
+  I('snack -> ' + heartCount(p.happy) + '/4 happy, ' + p.weight + 'g');
+  savePet();
+}
+
+function doDuck() {
+  const p = pet;
+  if (!p.poop) { I('duck: already clean'); return; }
+  I('duck: cleaned ' + p.poop);
+  p.poop = 0; p.poopT = 0;
+  savePet();
+}
+
+function doLight() {
+  const p = pet;
+  p.lights = !p.lights;
+  I('lights ' + (p.lights ? 'on' : 'off'));
+  if (!p.lights && p.call === 'light') clearCall(p, 'lights off');
+  savePet();
+}
+
+function doScold() {
+  const p = pet;
+  if (p.call !== 'brat') { I('scold: nothing to scold'); tamaSay('?', 1); return; }
+  p.discipline = Math.min(100, p.discipline + 25);
+  clearCall(p, 'scolded');
+  I('scolded -> discipline ' + p.discipline + '%');
+  savePet();
+}
+
+function doMed() {
+  const p = pet;
+  if (!p.sick) { I('medicine: not sick'); return; }
+  p.sickDoses = (p.sickDoses || 0) + 1;
+  tamaSay('+', 0.9);
+  I('medicine ' + p.sickDoses + '/' + TAMA.CURE_DOSES);
+  if (p.sickDoses >= TAMA.CURE_DOSES) { p.sick = false; p.sickT = 0; p.sickDoses = 0; I('cured'); }
+  savePet();
+}
+
+function newEgg() {
+  petRestart(pet);
+  pet.clock = 540;
+  I('new egg');
+  savePet();
+}
+
+function startGame() {
+  const p = pet;
+  if (p.sleeping) { tamaSay('zZ', 1.2); return; }
+  if (p.misbehaving) { tamaSay('!', 1.2); W_('refuses to play (misbehaving)'); return; }
+  p.game = { round: 0, wins: 0, look: Math.random() < 0.5 ? -1 : 1, phase: 'guess', result: '' };
+  I('minigame start (5 rounds)');
+}
+
+function gameTap(x, y) {
+  const p = pet, g = p.game;
+  if (g.phase === 'result') {
+    if (g.round >= 5) {
+      const won = g.wins >= 3;
+      if (won) { p.happy = clamp(p.happy + TAMA.HEART); if (p.call === 'sad') clearCall(p, 'game'); }
+      p.weight = Math.max(TAMA.BASE_WEIGHT[p.stage] || 5, p.weight - 1);
+      I('game ' + g.wins + '/5 ' + (won ? 'WIN (+1 heart)' : 'lose') + ' · ' + p.weight + 'g');
+      p.game = null; savePet(); return;
+    }
+    g.phase = 'guess'; g.look = Math.random() < 0.5 ? -1 : 1;
+    return;
+  }
+  if (y < 340) return;
+  const guess = x < W / 2 ? -1 : 1;
+  if (guess === g.look) g.wins++;
+  g.result = guess === g.look ? 'win' : 'miss';
+  g.phase = 'result';
+  g.round++;
 }
 
 /* ═══════════════════════════════════════════════════════════════ app 實作
@@ -1063,27 +1405,28 @@ function drawTama(t) {
  */
 Object.assign(appImpl, {
 
-  /* ─────────────────────────────────────────── Tamagotchi（進化 / 動作 / 行走） */
+  /* ───────────────────────────────── Tamagotchi（P1：心 / 失誤 / 進化 / 小遊戲） */
   tama: {
     draw(t) { drawTama(t); },
     tap(x, y) {
       const p = pet;
-      /* 大便：點 = 清理 */
-      if (p.poop && y > 330 && y < 380 && x > W - 92) { cleanPoop(); return; }
-      for (let i = 0; i < 3; i++) {
-        if (x >= 12 + i * 134 && x <= 12 + i * 134 + 118 && y >= 418 && y <= 480) {
-          if (!p.alive) { petRestart(p); I('new egg'); savePet(); return; }
-          if (i === 0) doFeed();
-          if (i === 1) doPlay();
-          if (i === 2) doSleepToggle();
-          savePet();
-          return;
-        }
+      if (!p.alive) { newEgg(); return; }
+      if (p.game) { gameTap(x, y); return; }
+      if (p.showStatus) { p.showStatus = false; return; }
+      if (p.submenu === 'feed' && y > 322 && y < 368) {
+        if (x < 134) doMeal();
+        else if (x < 263) doSnack();
+        else p.submenu = '';
+        return;
       }
-      /* 摸寵物 */
+      if (y >= 408 && y <= 468) {
+        const i = Math.max(0, Math.min(MENU.length - 1, Math.floor((x - 6) / 57)));
+        if (p.menu === i) menuAct(i); else { p.menu = i; p.submenu = ''; }
+        return;
+      }
       if (Math.abs(x - p.x) < 70 && y > 250 && y < 380) {
         if (p.sleeping) { tamaSay('zZ', 1); return; }
-        petStroke(p); tamaSay('♥', 1.2); savePet();
+        if (petStroke(p)) { tamaSay('♥', 1.2); savePet(); }
       }
     },
   },
@@ -1534,54 +1877,6 @@ Object.assign(appImpl, {
   },
 });
 
-/* ═══════════════════════════════════════════════════ 寵物動作（掣 → 動畫） */
-function doFeed() {
-  const p = pet;
-  if (p.sleeping) { tamaSay('zZ', 1.4); W_('FEED ignored: sleeping'); return; }
-  if (!petFeed(p)) { tamaSay('!', 1); W_('FEED blocked: already full'); return; }
-  p.anim = 'eat'; p.animT = 0; tamaSay('♥', 1.4);
-  I('FEED -> eat');
-}
-function doPlay() {
-  const p = pet;
-  if (p.sleeping) { tamaSay('zZ', 1.4); W_('PLAY ignored: sleeping'); return; }
-  if (!petPlay(p)) { tamaSay('x', 1); W_('PLAY blocked: energy ' + p.energy); return; }
-  p.anim = 'play'; p.animT = 0; tamaSay('♪', 1.4);
-  I('PLAY -> jump');
-}
-function doSleepToggle() {
-  const p = pet;
-  petSleep(p);
-  if (p.sleeping) { p.anim = 'sleep'; p.animT = 0; }
-  else { p.anim = 'idle'; p.animT = 0; tamaSay('!', 1); }
-  I(p.sleeping ? 'SLEEP' : 'WAKE');
-}
-function cleanPoop() {
-  const p = pet;
-  if (!p.poop) return;
-  p.poop--; p.happy = clamp(p.happy + 5);
-  p.sick = p.poop >= 2 || p.hunger < 12;
-  I('clean poop (' + p.poop + ' left)');
-  savePet();
-}
-
-/* ───────────────────────────── sprite sheet（?tpose=all 一次睇 12 個狀態） */
-function drawPoseSheet(t) {
-  ctx.fillStyle = '#0B0F14'; ctx.fillRect(0, 0, W, H);
-  const saved = PX;
-  POSES.forEach((pose, i) => {
-    const col = i % 4, row = Math.floor(i / 4);
-    const cellW = W / 4, cellH = 150;
-    const cx = cellW * col + cellW / 2, cy = 76 + row * cellH + 96;
-    rr(cellW * col + 6, 60 + row * cellH, cellW - 12, cellH - 14, 10, '#131A21');
-    PX = 2;
-    drawChick(t, pose, ['egg', 'wiggle', 'crack', 'hatch'].includes(pose) ? 'egg' : 'child', cx, cy);
-    PX = saved;
-    txt(pose, cx, 60 + row * cellH + cellH - 26, 11, '#8E8E93', 'center', 'middle', '600');
-  });
-  txt('12 POSES · 橙黃小雞', W / 2, 34, 13, '#fff', 'center', 'middle', '600');
-}
-
 /* ═══════════════════════════════════════════════════ 震動（VibrationTest） */
 function buzz() {
   const c = document.getElementById('case');
@@ -1693,9 +1988,9 @@ function frame(t) {
     while (acc >= 1) {
       acc -= 1;
       petTick(pet, 1);
+      tamaAI(1);                  /* 動作 / 呼叫 / 大便 / 進化（唔開 app 都會行） */
       if (--petSaveCountdown <= 0) { petSaveCountdown = 30; savePet(); }
     }
-    tamaAI(dt * 1000);            /* 動作 / 行路 / 大便 / 進化（唔開 app 都會行） */
     battery = Math.max(3, battery - dt / 900);
   }
 
@@ -1749,36 +2044,72 @@ function runTests() {
   ok(mode === 'app' && current === 'tama', 'tap icon -> app opens');
   ok(running[0] === 'tama' && running.length <= 3, 'recents keeps <=3');
 
-  /* app 內操作：餵食（app 內座標） */
-  pet.hunger = 50; pet.alive = true;
-  petInit(pet); pet.hunger = 50;
-  appImpl.tama.tap(71, 449);
-  ok(pet.hunger === 75, 'Tamagotchi FEED button -> hunger +25');
-  ok(pet.anim === 'eat', 'FEED triggers eat animation');
+  /* ── Tamagotchi P1 機制 ── */
+  petInit(pet); pet.stage = 'child'; pet.age_sec = 4300; pet.weight = 10;
+  pet.hunger = 50; pet.happy = 50;
+  ok(heartCount(100) === 4 && heartCount(1) === 1 && heartCount(0) === 0, 'hunger 0..100 -> 4 hearts');
 
-  ok(stageOf({ age_sec: 5, alive: true, poop: 0, stage: 'egg' }) === 'egg', 'stage egg');
-  ok(stageOf({ age_sec: 30, alive: true, poop: 0, stage: 'egg' }) === 'baby', 'stage baby');
-  ok(stageOf({ age_sec: 600, alive: true, poop: 0, stage: 'egg' }) === 'adult', 'stage adult');
-  ok(stageOf({ age_sec: 600, alive: true, poop: 2, stage: 'child' }) === 'child', 'dirty pet does not evolve');
+  doMeal();
+  ok(pet.hunger === 75, 'meal +1 heart');
+  ok(pet.weight === 11, 'meal +1g');
+  pet.hunger = 100; doMeal();
+  ok(pet.hunger === 100, 'refuses meal at 4 full hearts');
 
-  petInit(pet); pet.age_sec = 30;
-  const x0 = pet.x;
-  for (let i = 0; i < 400; i++) tamaAI(60);
-  ok(pet.stage === 'baby', 'AI promotes to baby after 20s');
-  ok(Math.abs(pet.x - x0) > 1, 'pet walks around the screen');
+  pet.weight = 10; pet.happy = 50; doSnack();
+  ok(pet.happy === 75 && pet.weight === 12, 'snack +1 happy heart, +2g');
 
-  petInit(pet); pet.sleeping = true; pet.hunger = 20; pet.happy = 20; pet.energy = 50;
-  ok(!petFeed(pet), 'sleeping pet refuses FEED');
-  ok(!petPlay(pet), 'sleeping pet refuses PLAY');
-  ok(!petStroke(pet), 'sleeping pet refuses stroke');
+  /* 呼叫 → 15 分鐘唔理 = care mistake */
+  pet.call = ''; pet.mistakes = 0; pet.hunger = 0;
+  pet.stage = 'child'; pet.age_sec = 4300;
+  raiseCall(pet, 'hungry');
+  ok(pet.call === 'hungry', 'hunger 0 triggers call');
+  for (let i = 0; i < 950; i++) tamaAI(1);
+  ok(pet.mistakes === 1, 'unanswered call after 15min = 1 mistake');
+
+  /* SCOLD 只喺扭計時有效 */
+  pet.mistakes = 0; pet.discipline = 0; pet.hunger = 50; pet.happy = 50;
+  pet.call = 'brat'; pet.misbehaving = true;
+  doScold();
+  ok(pet.discipline === 25 && pet.call === '', 'scold brat -> discipline +25%');
+  doScold();
+  ok(pet.discipline === 25, 'scold outside misbehaving does nothing');
+
+  /* 便便上限 4 + 醫病 */
+  pet.poop = 4; pet.sick = true; pet.sickDoses = 0;
+  doDuck();
+  ok(pet.poop === 0, 'duck clears all poop');
+  ok(pet.sick === true, 'cleaning poop does not cure sickness');
+  doMed(); doMed();
+  ok(pet.sick === true, '2 doses not enough');
+  doMed();
+  ok(pet.sick === false, '3 doses cure');
+
+  /* 進化門檻 + 分支 */
+  ok(stageOf({ age_sec: 10, alive: true }) === 'egg', 'stage egg');
+  ok(stageOf({ age_sec: 1000, alive: true }) === 'baby', 'stage baby');
+  ok(stageOf({ age_sec: 4300, alive: true }) === 'child', 'stage child');
+  ok(stageOf({ age_sec: 5500, alive: true }) === 'teen', 'stage teen');
+  ok(stageOf({ age_sec: 10900, alive: true }) === 'adult', 'stage adult');
+  ok(branchFor({ mistakes: 0, discipline: 100, weight: 30 }) === 'good', 'good care -> good branch');
+  ok(branchFor({ mistakes: 6, discipline: 0, weight: 30 }) === 'bad', 'many mistakes -> bad branch');
+
+  /* 小遊戲：贏 5 回合 +1 心、-1g */
+  petInit(pet); pet.stage = 'child'; pet.age_sec = 4300; pet.weight = 20; pet.happy = 50;
+  startGame();
+  ok(!!pet.game && pet.game.round === 0, 'PLAY starts 5-round game');
+  for (let i = 0; i < 5; i++) {
+    pet.game.look = -1;      /* 固定望向 → 估左必贏 */
+    gameTap(10, 400);
+    gameTap(0, 420);
+  }
+  ok(pet.game === null, 'game ends after 5 rounds');
+  ok(pet.happy === 75 && pet.weight === 19, 'winning the game: +1 heart, -1g');
+
+  /* 瞓覺期間一律拒絕 */
+  petInit(pet); pet.sleeping = true; pet.hunger = 20; pet.happy = 20;
+  ok(!petFeed(pet) && !petPlay(pet) && !petStroke(pet), 'sleeping pet refuses feed/play/stroke');
   ok(pet.hunger === 20 && pet.happy === 20, 'sleeping pet stats untouched');
   pet.sleeping = false;
-
-  pet.poopT = 39.9; pet.poop = 0; tamaAI(200);
-  ok(pet.poop === 1, 'poop appears over time');
-  pet.x = 300; pet.happy = 50;
-  appImpl.tama.tap(W - 70, 360);
-  ok(pet.poop === 0, 'tap poop cleans it');
 
   petInit(pet);
 
@@ -1802,16 +2133,16 @@ function runTests() {
   ok(download === true && powered === false, 'BOOT held + PWR -> download mode');
   download = false; powered = true; bootDown = false;
 
-  /* 寵物邏輯（同 pet_logic.h 一樣嘅 assert） */
-  const p = { hunger: 0, happy: 0, energy: 0, starve: 0, acc: 0, age_sec: 0, sleeping: false, alive: true };
-  petInit(p);
-  for (let i = 0; i < (PET_FULL + PET_STARVE_STEPS) * PET_DECAY_SEC; i++) petTick(p, 1);
-  ok(p.hunger === 0 && !p.alive, 'starves to death');
-  ok(!petFeed(p) && !petStroke(p), 'dead pet refuses actions');
+  /* 死亡機制：餓足 STARVE_DEATH 就死，死後拒絕一切操作 */
+  const p = { };
+  petInit(p); p.stage = 'child'; p.age_sec = 4300; p.hunger = 0;
+  for (let i = 0; i < TAMA.STARVE_DEATH + 10; i++) tamaAI(1, p);
+  ok(!p.alive && p.deathReason === 'hunger', 'starves to death');
+  ok(!petFeed(p) && !petStroke(p) && !petPlay(p), 'dead pet refuses actions');
   petRestart(p);
-  for (let i = 0; i < 20; i++) petFeed(p);
-  ok(p.hunger === PET_FULL, 'feed clamps at 100');
-  p.energy = 5; ok(!petPlay(p), 'play blocked at energy<10');
+  petInit(p); p.stage = 'child'; p.age_sec = 4300;
+  for (let i = 0; i < 20; i++) doMeal();
+  ok(p.hunger === 100, 'meal clamps at 4 hearts');
 
   /* 設定 / 儲存 */
   brightness = 40; applyBrightness();
@@ -1844,9 +2175,13 @@ if (q.get('app') && appImpl[q.get('app')]) {
   openApp(q.get('app'));                              /* deep link: ?app=tama */
   if (q.get('sp')) appImpl[q.get('app')].page = q.get('sp');   /* ?app=set&sp=wlan */
 }
-if (q.get('tstage') && STAGE_GATE[q.get('tstage')] !== undefined) {   /* ?tstage=teen */
-  pet.age_sec = STAGE_GATE[q.get('tstage')] + 1; pet.stage = q.get('tstage');
+const STAGE_AT = { egg: 0, baby: 320, child: 4300, teen: 5500, adult: 10900 };
+if (q.get('tstage') && STAGE_AT[q.get('tstage')] !== undefined) {   /* ?tstage=teen */
+  pet.age_sec = STAGE_AT[q.get('tstage')]; pet.stage = q.get('tstage');
+  pet.weight = TAMA.BASE_WEIGHT[pet.stage] || 5;
   pet.poop = +(q.get('tpoop') || 0);
+  if (q.get('tbranch')) { pet.branch = q.get('tbranch'); pet.mistakes = q.get('tbranch') === 'bad' ? 4 : 0; }
+  if (pet.stage === 'adult') pet.branch = pet.branch || branchFor(pet);
 }
 const POSES = ['egg', 'wiggle', 'crack', 'hatch', 'idle', 'happy', 'walk', 'sleep', 'eat', 'cry', 'poop', 'sick'];
 const SHEET = q.get('tpose') === 'all';
