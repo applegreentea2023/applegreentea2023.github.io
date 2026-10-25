@@ -197,13 +197,14 @@ const pet = {
   hunger: 80, happy: 80, energy: 80, starve: 0, acc: 0, age_sec: 0, sleeping: false, alive: true,
   /* 動作 / 位置 / 大便 / 進化（真機係 LVGL，呢度係 canvas 對應物） */
   x: 205, dir: 1, anim: 'idle', animT: 0, blink: 0, poop: 0, poopT: 0,
-  stage: 'egg', bubble: '', bubbleT: 0,
+  stage: 'egg', bubble: '', bubbleT: 0, sick: false, poseOverride: '',
 };
 const clamp = v => v < 0 ? 0 : (v > PET_FULL ? PET_FULL : v);
 function petInit(p) {
   Object.assign(p, { hunger: 80, happy: 80, energy: 80, starve: 0, acc: 0, age_sec: 0,
                      sleeping: false, alive: true, x: 205, dir: 1, anim: 'idle', animT: 0,
-                     blink: 0, poop: 0, poopT: 0, stage: 'egg', bubble: '', bubbleT: 0 });
+                     blink: 0, poop: 0, poopT: 0, stage: 'egg', bubble: '', bubbleT: 0,
+                     sick: false, poseOverride: '', anim2: '' });
 }
 
 function petTick(p, dt) {
@@ -650,6 +651,22 @@ function stageOf(p) {
   return 'egg';
 }
 
+/* 由狀態決定播邊個 pose（12 個） */
+function poseOf(p) {
+  if (p.poseOverride) return p.poseOverride;
+  if (!p.alive) return 'dead';
+  if (p.stage === 'egg') return p.anim === 'hatch' ? 'hatch' : (p.anim === 'crack' ? 'crack' : (p.anim === 'wiggle' ? 'wiggle' : 'egg'));
+  if (p.sleeping) return 'sleep';
+  if (p.sick) return 'sick';
+  if (p.happy < 15) return 'cry';
+  if (p.anim === 'eat') return 'eat';
+  if (p.anim === 'play') return 'happy';
+  if (p.anim === 'poop') return 'poop';
+  if (p.anim === 'hatch') return 'hatch';
+  if (p.anim === 'walk') return 'walk';
+  return 'idle';
+}
+
 function tamaSay(s, secs) { pet.bubble = s; pet.bubbleT = secs || 1.6; }
 
 /* 每 frame 推進一步：動作揀選、行走、大便、進化 */
@@ -669,6 +686,12 @@ function tamaAI(dtms) {
     else { p.anim = 'evo'; p.animT = 0; tamaSay('★', 2); }
     I('evolve -> ' + st + ' @' + Math.round(p.age_sec) + 's');
   }
+
+  /* 病：環境唔乾淨或者餓親 */
+  const wasSick = p.sick;
+  p.sick = (p.poop >= 2) || (p.hunger < 12);
+  if (p.sick && !wasSick) { W_('pet is sick'); tamaSay('!', 1.5); }
+  if (!p.sick && wasSick) I('recovered');
 
   /* 自動睡：體力低 */
   if (!p.sleeping && p.energy === 0 && p.anim !== 'sleep') { p.sleeping = true; W_('exhausted -> sleep'); }
@@ -696,122 +719,284 @@ function tamaAI(dtms) {
   if (p.poopT > 40 && p.poop < 3) {
     p.poop++; p.poopT = 0;
     p.happy = clamp(p.happy - 6);
+    p.anim = 'poop'; p.animT = 0;
     tamaSay('…', 1.2);
     I('poop on the floor (' + p.poop + ')');
   }
 }
 
 /* ───────────────────────────────────────── 畫：場景 → 大便 → 寵物 → UI */
-function drawCreature(cx, feetY, s, stage, mood, t) {
-  const p = pet;
-  const col = MCOL[mood];
-  const breathe = Math.sin(t / 420) * 0.03;
-  const bob = p.anim === 'walk' ? Math.abs(Math.sin(t / 130)) * 3 : Math.sin(t / 500) * 1.5;
-  const squash = (p.anim === 'play' ? Math.abs(Math.sin(t / 160)) * 0.12 : 0) + breathe;
-  const cy = feetY - s - bob;
+/* ══════════════ 像素角色（照用戶提供嘅原畫：橙黃小雞 + 呆毛觸角 + 米色肚 + 腮紅）
+ * 用「art pixel」座標畫，1 art px = PX device px，邊緣逐行 span 令佢有像素階梯感
+ * 12 個狀態：egg / wiggle / crack / hatch / idle / happy / walk / sleep / eat / cry / poop / sick
+ */
+const PAL = {
+  line: '#4A2B12', body: '#FFB43C', shade: '#EE9A24', belly: '#FFE8BC',
+  cheek: '#FF9AA2', eye: '#3B2412', white: '#FFFDF3', mouth: '#7A3E1E',
+  egg: '#F7E9CE', spot: '#D9B98C', blue: '#7FD3FF', pink: '#FF6B81',
+  poop: '#7A4B2A', iced: '#CFEEFF', blanket: '#8FC7E8', grey: '#9A9AA2',
+};
+let PX = 4;                                    /* 一個 art pixel = 4 device px（sheet 會暫改 2） */
 
-  /* 影 */
-  ctx.fillStyle = 'rgba(0,0,0,.45)';
-  ctx.beginPath(); ctx.ellipse(cx, feetY + 2, s * 0.7, s * 0.16, 0, 0, Math.PI * 2); ctx.fill();
+const pxR = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x * PX, y * PX, w * PX, h * PX); };
 
-  if (stage === 'egg') {
-    const wob = p.anim === 'hatch' ? Math.sin(t / 45) * 0.16 : Math.sin(t / 700) * 0.04;
-    ctx.save(); ctx.translate(cx, feetY - s); ctx.rotate(wob);
-    ctx.fillStyle = '#F4EFE2';
-    ctx.beginPath(); ctx.ellipse(0, 0, s * 0.78, s, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#D8CDB6';
-    [[-0.3, -0.3], [0.32, -0.15], [-0.1, 0.3], [0.35, 0.34]].forEach(([dx, dy]) => {
-      ctx.beginPath(); ctx.arc(dx * s, dy * s, s * 0.13, 0, Math.PI * 2); ctx.fill();
-    });
-    if (p.anim === 'hatch') {                       /* 裂紋 */
-      ctx.strokeStyle = '#7A6E58'; ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(-s * 0.5, -s * 0.1); ctx.lineTo(-s * 0.2, s * 0.05);
-      ctx.lineTo(0, -s * 0.15); ctx.lineTo(s * 0.3, 0.0); ctx.lineTo(s * 0.5, -s * 0.18);
-      ctx.stroke();
+/* 像素橢圓（逐行 fillRect，邊緣自動階梯化） */
+function pxBlob(cx, cy, rx, ry, c) {
+  ctx.fillStyle = c;
+  for (let y = -ry; y <= ry; y++) {
+    const t = 1 - (y * y) / (ry * ry);
+    if (t <= 0) continue;
+    const w = Math.floor(rx * Math.sqrt(t));
+    ctx.fillRect((cx - w) * PX, (cy + y) * PX, (2 * w + 1) * PX, PX);
+  }
+}
+/* 蛋：下闊上窄 */
+function pxEgg(cx, cy, rx, ry, c) {
+  ctx.fillStyle = c;
+  for (let y = -ry; y <= ry; y++) {
+    const t = 1 - (y * y) / (ry * ry);
+    if (t <= 0) continue;
+    const w = Math.floor(rx * Math.sqrt(t) * (1 + 0.22 * (y / ry)));
+    ctx.fillRect((cx - w) * PX, (cy + y) * PX, (2 * w + 1) * PX, PX);
+  }
+}
+
+/* ── 表情零件（全部以頭中心為原點，art px） */
+function chickEyes(kind) {
+  if (kind === 'closed' || kind === 'happy') {          /* ^ ^ 或 ‿ ‿ */
+    pxR(-5, -15, 3, 1, PAL.eye);
+    pxR(-6, -16, 1, 1, PAL.eye); pxR(-2, -16, 1, 1, PAL.eye);
+    pxR(2, -15, 3, 1, PAL.eye);
+    pxR(1, -16, 1, 1, PAL.eye); pxR(5, -16, 1, 1, PAL.eye);
+  } else if (kind === 'cry') {                          /* > < */
+    pxR(-6, -17, 1, 1, PAL.eye); pxR(-5, -16, 1, 1, PAL.eye); pxR(-4, -15, 1, 1, PAL.eye);
+    pxR(-5, -14, 1, 1, PAL.eye); pxR(-6, -13, 1, 1, PAL.eye);
+    pxR(4, -17, 1, 1, PAL.eye); pxR(3, -16, 1, 1, PAL.eye); pxR(2, -15, 1, 1, PAL.eye);
+    pxR(3, -14, 1, 1, PAL.eye); pxR(4, -13, 1, 1, PAL.eye);
+  } else if (kind === 'droop') {                         /* 半合眼 */
+    for (const sx of [-1, 1]) {
+      pxR(sx * 4 - 2, -16, 4, 1, PAL.eye);
+      pxR(sx * 4 - 2, -15, 1, 1, PAL.eye);
     }
+  } else if (kind === 'dead') {                          /* x x */
+    for (const sx of [-1, 1]) {
+      for (let i = 0; i < 3; i++) { pxR(sx * 5 - 2 + i, -17 + i, 1, 1, PAL.eye); pxR(sx * 5 - 2 + i, -15 - i, 1, 1, PAL.eye); }
+    }
+  } else {                                              /* 圓眼 + 高光 */
+    for (const sx of [-1, 1]) {
+      pxR(sx * 4 - 1, -17, 3, 3, PAL.eye);
+      pxR(sx * 4 - 1, -17, 1, 1, PAL.white);
+    }
+  }
+}
+
+function chickMouth(kind) {
+  if (kind === 'open') {                                /* 張口 */
+    pxR(-1, -11, 3, 2, PAL.mouth);
+    pxR(-1, -11, 3, 1, '#C4562B');
+  } else if (kind === 'smile') {
+    pxR(-1, -12, 3, 1, PAL.mouth);
+    pxR(-2, -13, 1, 1, PAL.mouth); pxR(2, -13, 1, 1, PAL.mouth);
+  } else if (kind === 'flat') {
+    pxR(-1, -12, 3, 1, PAL.mouth);
+  } else if (kind === 'wail') {                          /* 大喊 */
+    pxR(-2, -12, 5, 3, PAL.mouth);
+    pxR(-1, -10, 3, 1, '#D2603A');
+  }
+}
+
+function chickHead(r, pose, t) {
+  /* 呆毛：向上再捲向右（跟原畫），2px 粗先睇得清 */
+  pxR(-1, -r - 11, 2, 11, PAL.line);
+  pxR(1, -r - 13, 1, 2, PAL.line);
+  pxR(2, -r - 13, 3, 1, PAL.line);
+  pxR(4, -r - 12, 1, 2, PAL.line);
+
+  const cy = -r - 3;                                         /* 抬高 3px，隻腳先露得出 */
+  pxBlob(0, cy, r + 1, r + 1, PAL.line);                     /* 外框 */
+  pxBlob(0, cy, r, r, PAL.body);                             /* 身 */
+  pxBlob(0, cy + Math.round(r * 0.42), Math.round(r * 0.62), Math.round(r * 0.5), PAL.belly);
+
+  if (pose === 'sick') {                                     /* 病：整體偏藍 */
+    ctx.globalAlpha = 0.30; pxBlob(0, cy, r, r, '#7FD3FF'); ctx.globalAlpha = 1;
+  }
+  pxR(-r + 1, cy - 1, 3, 2, PAL.cheek);                       /* 腮紅 */
+  pxR(r - 4, cy - 1, 3, 2, PAL.cheek);
+
+  if (pose === 'sleep') chickEyes('closed'), chickMouth('flat');
+  else if (pose === 'dead') chickEyes('dead'), chickMouth('flat');
+  else if (pose === 'cry') chickEyes('cry'), chickMouth('wail');
+  else if (pose === 'happy') chickEyes('happy'), chickMouth('open');
+  else if (pose === 'sick') chickEyes('droop'), chickMouth('flat');
+  else if (pose === 'eat' || pose === 'poop') chickEyes('open'), chickMouth('open');
+  else chickEyes('open'), chickMouth('smile');
+
+  /* 腳：行路時左右交替踏起（同 idle 明顯唔同） */
+  if (pose === 'walk') {
+    pxR(-7, -5, 3, 3, PAL.shade);                            /* 前腳曲起 */
+    pxR(4, -3, 3, 3, PAL.shade);                             /* 後腳落地 */
+    pxR(-r - 9, -13, 4, 1, PAL.grey);                        /* 動線 */
+    pxR(-r - 7, -9, 3, 1, PAL.grey);
+    pxR(r + 5, -16, 3, 1, PAL.grey);
+  } else {
+    pxR(-5, -3, 3, 3, PAL.shade);
+    pxR(3, -3, 3, 3, PAL.shade);
+  }
+
+  /* 手（雞翼） */
+  if (pose === 'happy') { pxR(-r - 2, -r - 4, 2, 4, PAL.shade); pxR(r, -r - 4, 2, 4, PAL.shade); }
+  else if (pose === 'cry') { pxR(-r - 2, -r + 4, 2, 3, PAL.shade); pxR(r, -r + 4, 2, 3, PAL.shade); }
+  else if (pose === 'walk') { pxR(-r - 1, -r + 2, 2, 3, PAL.shade); pxR(r, -r + 1, 2, 3, PAL.shade); }
+  else { pxR(-r - 1, -r + 3, 2, 2, PAL.shade); pxR(r, -r + 3, 2, 2, PAL.shade); }
+}
+
+function drawChick(t, poseArg, stageArg, cxArg, cyArg) {
+  const p = pet;
+  const pose = poseArg || poseOf(p);
+  const stage = stageArg || p.stage;
+  const cx = cxArg === undefined ? p.x : cxArg;
+  const cy = cyArg === undefined ? 372 : cyArg;
+  const r = { baby: 9, child: 11, teen: 13, adult: 15 }[stage] || 9;
+
+  const bob = pose === 'walk' ? (Math.abs(Math.sin(t / 120)) > 0.5 ? -1 : 0)
+            : (Math.sin(t / 520) > 0.9 ? -1 : 0);
+
+  ctx.save();
+  ctx.translate(cx, cy + bob * PX);                 /* 原點 = 腳底中心 */
+
+  if (stage === 'egg') { drawEggPose(t, pose); ctx.restore(); return; }
+
+  if (pose === 'walk') { ctx.translate(0, -PX * 2); ctx.rotate(0.05); }
+
+  if (pose === 'sleep') {                            /* 躺平 + 被 */
+    ctx.rotate(-0.12);
+    chickHead(r, pose, t);
+    pxR(-r - 1, -3, (r + 1) * 2, 4, PAL.blanket);
+    pxR(-r - 1, -3, (r + 1) * 2, 1, '#B9DCF2');
     ctx.restore();
     return;
   }
 
-  const bodyW = s * 0.92, bodyH = s * (1 + squash);
-  /* 腳 */
-  const step = p.anim === 'walk' ? Math.sin(t / 110) * s * 0.16 : 0;
-  ctx.fillStyle = col;
-  rr(cx - bodyW * 0.42 + step, feetY - s * 0.22, s * 0.26, s * 0.26, s * 0.12, col);
-  rr(cx + bodyW * 0.16 - step, feetY - s * 0.22, s * 0.26, s * 0.26, s * 0.12, col);
+  chickHead(r, pose, t);
 
-  /* 尾巴 / 耳仔 / 冠（跟 stage 逐級加） */
-  if (stage === 'teen' || stage === 'adult') {
-    ctx.strokeStyle = col; ctx.lineWidth = s * 0.12; ctx.lineCap = 'round';
+  if (pose === 'happy') {
+    heart(-r - 7, -r - 9, PAL.pink);
+    heart(r + 3, -r - 13, PAL.pink);
+    pxR(r + 1, -r - 21, 1, 4, PAL.eye);
+    pxR(r + 2, -r - 17, 2, 1, PAL.eye);
+  }
+  if (pose === 'cry') {
+    pxR(-8, -13, 1, 4, PAL.blue); pxR(-8, -9, 2, 1, PAL.blue);
+    pxR(7, -13, 1, 4, PAL.blue); pxR(6, -9, 2, 1, PAL.blue);
+  }
+  if (pose === 'sick') {                               /* 冰袋（白十字）+ 汗 + 骷髏泡 */
+    pxR(-7, -r - 6, 14, 5, PAL.line);
+    pxR(-6, -r - 5, 12, 3, PAL.iced);
+    pxR(-1, -r - 5, 2, 3, PAL.white);
+    pxR(-3, -r - 4, 6, 1, PAL.white);
+    pxR(r + 2, -r + 1, 1, 4, PAL.blue);
+    pxR(r + 3, -r - 2, 1, 2, PAL.blue);
+    skull(r + 5, -r - 14);
+  }
+  if (pose === 'eat') {                                /* 奶樽斜住 + 碗 */
+    for (let i = 0; i < 6; i++) pxR(-2 - i, -14 - i, 3, 3, i === 0 ? '#FFFFFF' : PAL.white);
+    pxR(-3, -18, 3, 2, PAL.white);                     /* 奶嘴 */
+    pxR(-2, -15, 2, 1, PAL.blue);
+    pxR(r + 2, -4, 8, 3, PAL.white);                   /* 碗 */
+    pxR(r + 3, -5, 6, 1, PAL.shade);
+    pxR(-r - 8, -14, 1, 1, PAL.white);                 /* 飛出嚟嘅碎屑 */
+    pxR(-r - 5, -11, 1, 1, PAL.white);
+  }
+  if (pose === 'poop') {
+    pxR(0, -2, 1, 1, PAL.blue);
+    pojPile(r + 3, -2);
+  }
+  if (pose === 'dead') skull(r + 7, -r - 9);
+
+  ctx.restore();
+
+  /* 地上嘅大便（獨立於 pose） */
+  if (p.poop && pose !== 'poop') {
+    ctx.save();
+    ctx.translate(W - 70, 372);
+    for (let i = 0; i < p.poop; i++) {
+      ctx.save(); ctx.translate(i * 22, 0); pojPile(0, 0); ctx.restore();
+    }
+    ctx.restore();
+  }
+}
+
+function pojPile(x, y) {
+  pxR(x, y - 2, 5, 2, PAL.poop);
+  pxR(x + 1, y - 4, 3, 2, PAL.poop);
+  pxR(x + 2, y - 5, 1, 1, PAL.poop);
+}
+
+function heart(x, y, c) {
+  pxR(x, y, 1, 1, c); pxR(x + 2, y, 1, 1, c);
+  pxR(x - 1, y + 1, 5, 1, c);
+  pxR(x, y + 2, 3, 1, c);
+  pxR(x + 1, y + 3, 1, 1, c);
+}
+function skull(x, y) {
+  pxR(x, y, 5, 4, PAL.white);
+  pxR(x + 1, y + 1, 1, 1, PAL.eye); pxR(x + 3, y + 1, 1, 1, PAL.eye);
+  pxR(x + 1, y + 4, 3, 1, PAL.white);
+}
+function poopPile(dx, y, deviceOffset) {
+  const base = deviceOffset !== undefined ? deviceOffset : dx * PX;
+  pxR(0, y - 2, 5, 2, PAL.poop);
+  pxR(1, y - 4, 4, 2, PAL.poop);
+  pxR(2, y - 6, 2, 2, PAL.poop);
+  if (deviceOffset !== undefined) return;
+}
+
+/* 蛋嘅四個階段：egg / wiggle / crack / hatch */
+function drawEggPose(t, pose) {
+  const wob = pose === 'wiggle' || pose === 'crack' ? Math.sin(t / 90) * 0.10
+            : pose === 'hatch' ? Math.sin(t / 60) * 0.16
+            : Math.sin(t / 800) * 0.03;
+  ctx.rotate(wob);
+
+  if (pose === 'hatch') {                                /* 下半殼 + 小雞冒出 */
+    pxEgg(0, -6, 10, 7, PAL.line);
+    pxEgg(0, -6, 9, 6, PAL.egg);
+    ctx.save(); ctx.translate(0, -2);
+    chickHead(8, 'happy', t);
+    ctx.restore();
+    pxR(-11, -6, 3, 2, PAL.egg);                         /* 飛出嘅殼碎 */
+    pxR(9, -11, 2, 2, PAL.egg);
+    sparkle(-13, -20); sparkle(13, -16);
+    return;
+  }
+
+  pxEgg(0, -12, 10, 12, PAL.line);
+  pxEgg(0, -12, 9, 11, PAL.egg);
+  pxBlob(-3, -16, 3, 2, PAL.spot);
+  pxBlob(4, -9, 2, 2, PAL.spot);
+  pxBlob(-2, -6, 2, 1, PAL.spot);
+
+  if (pose === 'crack') {                                /* 裂紋（粗，兩段 zigzag）+ 碎殼 + 汗 */
+    ctx.strokeStyle = '#8A6A44'; ctx.lineWidth = PX * 1.4;
+    ctx.lineCap = 'butt';
     ctx.beginPath();
-    ctx.moveTo(cx - p.dir * bodyW * 0.72, cy + s * 0.5);
-    ctx.quadraticCurveTo(cx - p.dir * bodyW * 1.22, cy + s * 0.62, cx - p.dir * bodyW * 1.16, cy + s * 0.12);
+    ctx.moveTo(-9 * PX, -15 * PX); ctx.lineTo(-5 * PX, -12 * PX);
+    ctx.lineTo(-2 * PX, -16 * PX); ctx.lineTo(2 * PX, -12 * PX); ctx.lineTo(5 * PX, -16 * PX);
+    ctx.lineTo(8 * PX, -13 * PX);
     ctx.stroke();
+    ctx.beginPath();                                     /* 下面加一段 */
+    ctx.moveTo(5 * PX, -12 * PX); ctx.lineTo(8 * PX, -8 * PX);
+    ctx.stroke();
+    pxR(9, -19, 3, 2, PAL.egg);                          /* 甩出嚟嘅殼片 */
+    pxR(-15, -18, 1, 3, PAL.blue); pxR(13, -20, 1, 3, PAL.blue);
   }
-
-  /* 身 */
-  ctx.fillStyle = col;
-  ctx.beginPath(); ctx.ellipse(cx, cy, bodyW, bodyH, 0, 0, Math.PI * 2); ctx.fill();
-  /* 肚 */
-  ctx.fillStyle = 'rgba(255,255,255,.20)';
-  ctx.beginPath(); ctx.ellipse(cx, cy + bodyH * 0.34, bodyW * 0.62, bodyH * 0.42, 0, 0, Math.PI * 2); ctx.fill();
-
-  if (stage === 'child' || stage === 'teen' || stage === 'adult') {   /* 耳 */
-    ctx.fillStyle = col;
-    for (const sx of [-1, 1]) {
-      ctx.beginPath();
-      ctx.moveTo(cx + sx * bodyW * 0.34, cy - bodyH * 0.78);
-      ctx.lineTo(cx + sx * bodyW * 0.62, cy - bodyH * 1.42);
-      ctx.lineTo(cx + sx * bodyW * 0.02, cy - bodyH * 0.86);
-      ctx.closePath(); ctx.fill();
-    }
+  if (pose === 'wiggle') {                               /* 動線 */
+    pxR(-14, -16, 1, 4, PAL.grey); pxR(-16, -12, 1, 2, PAL.grey);
+    pxR(12, -16, 1, 4, PAL.grey); pxR(14, -12, 1, 2, PAL.grey);
   }
-  if (stage === 'adult') {                                            /* 冠 */
-    ctx.fillStyle = '#FFD60A';
-    for (let i = -1; i <= 1; i++) {
-      ctx.beginPath();
-      ctx.moveTo(cx + i * bodyW * 0.24 - bodyW * 0.1, cy - bodyH * 0.92);
-      ctx.lineTo(cx + i * bodyW * 0.24, cy - bodyH * 1.35);
-      ctx.lineTo(cx + i * bodyW * 0.24 + bodyW * 0.1, cy - bodyH * 0.92);
-      ctx.closePath(); ctx.fill();
-    }
-  }
-
-  /* 面 */
-  const ex = s * 0.3, ey = cy - bodyH * 0.18, er = s * 0.16;
-  const closed = (p.blink > 0) || p.sleeping || p.anim === 'dead';
-  ctx.strokeStyle = '#101014'; ctx.fillStyle = '#101014'; ctx.lineWidth = Math.max(2, s * 0.055);
-  for (const sx of [-1, 1]) {
-    if (closed) {
-      ctx.beginPath(); ctx.arc(cx + sx * ex, ey, er, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
-    } else {
-      ctx.beginPath(); ctx.arc(cx + sx * ex, ey, er, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#fff';
-      ctx.beginPath(); ctx.arc(cx + sx * ex - er * 0.3, ey - er * 0.35, er * 0.32, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#101014';
-    }
-  }
-  /* 嘴 */
-  const my = cy + bodyH * 0.26, mw = s * 0.26;
-  ctx.lineWidth = Math.max(2, s * 0.06);
-  if (p.anim === 'eat') {
-    ctx.beginPath(); ctx.arc(cx, my, mw * 0.55 + Math.abs(Math.sin(t / 110)) * mw * 0.3, 0, Math.PI * 2); ctx.fill();
-  } else if (p.anim === 'dead') {
-    ctx.beginPath(); ctx.moveTo(cx - mw, my); ctx.lineTo(cx + mw, my); ctx.stroke();
-  } else if (mood === 2) {
-    ctx.beginPath(); ctx.arc(cx, my + mw * 0.6, mw, 1.15 * Math.PI, 1.85 * Math.PI); ctx.stroke();
-  } else if (p.anim === 'play') {
-    ctx.beginPath(); ctx.arc(cx, my - mw * 0.2, mw, 0, Math.PI); ctx.fill();
-  } else {
-    ctx.beginPath(); ctx.arc(cx, my - mw * 0.35, mw, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
-  }
-  /* 腮紅 */
-  if (mood === 0) {
-    ctx.fillStyle = 'rgba(255,120,120,.45)';
-    ctx.beginPath(); ctx.arc(cx - s * 0.62, cy + bodyH * 0.05, s * 0.13, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx + s * 0.62, cy + bodyH * 0.05, s * 0.13, 0, Math.PI * 2); ctx.fill();
-  }
+}
+function sparkle(x, y) {
+  pxR(x, y, 1, 3, '#FFE066'); pxR(x - 1, y + 1, 3, 1, '#FFE066');
 }
 
 function drawPoop(x, y, n) {
@@ -852,7 +1037,6 @@ function drawTama(t) {
     rr(74, y, 278, 12, 6, '#2C2C2E');
     if (vals[i] > 0) rr(74, y, Math.max(12, 278 * vals[i] / 100), 12, 6, cols[i]);
   }
-  if (p.poop) drawPoop(W - 60, 372, p.poop);
 
   /* 泡泡 */
   if (p.bubbleT > 0 && p.bubble) {
@@ -860,8 +1044,7 @@ function drawTama(t) {
     txt(p.bubble, bx + 44, 372 - (p.stage === 'egg' ? 70 : 120), 22, '#fff', 'center', 'middle', '600');
   }
 
-  const S = { egg: 26, baby: 30, child: 40, teen: 48, adult: 56 };
-  drawCreature(p.x, 372, S[p.stage] || 30, p.stage, mood, t);
+  drawChick(t);
 
   if (p.sleeping) txt('z z Z', p.x + 54, 372 - 96, 16, '#8E8E93', 'center', 'middle');
 
@@ -1372,8 +1555,26 @@ function cleanPoop() {
   const p = pet;
   if (!p.poop) return;
   p.poop--; p.happy = clamp(p.happy + 5);
+  p.sick = p.poop >= 2 || p.hunger < 12;
   I('clean poop (' + p.poop + ' left)');
   savePet();
+}
+
+/* ───────────────────────────── sprite sheet（?tpose=all 一次睇 12 個狀態） */
+function drawPoseSheet(t) {
+  ctx.fillStyle = '#0B0F14'; ctx.fillRect(0, 0, W, H);
+  const saved = PX;
+  POSES.forEach((pose, i) => {
+    const col = i % 4, row = Math.floor(i / 4);
+    const cellW = W / 4, cellH = 150;
+    const cx = cellW * col + cellW / 2, cy = 76 + row * cellH + 96;
+    rr(cellW * col + 6, 60 + row * cellH, cellW - 12, cellH - 14, 10, '#131A21');
+    PX = 2;
+    drawChick(t, pose, ['egg', 'wiggle', 'crack', 'hatch'].includes(pose) ? 'egg' : 'child', cx, cy);
+    PX = saved;
+    txt(pose, cx, 60 + row * cellH + cellH - 26, 11, '#8E8E93', 'center', 'middle', '600');
+  });
+  txt('12 POSES · 橙黃小雞', W / 2, 34, 13, '#fff', 'center', 'middle', '600');
 }
 
 /* ═══════════════════════════════════════════════════ 震動（VibrationTest） */
@@ -1501,6 +1702,8 @@ function frame(t) {
       txt('ROM: waiting for download @ 0x0', 18, 30, 13, '#4ADE80', 'left', 'alphabetic', '600');
       txt('(real board: panel unlit here)', 18, 52, 11, '#2F6B45', 'left');
     }
+  } else if (SHEET) {
+    drawPoseSheet(t);
   } else {
     if (mode === 'home') drawHome();
     else if (mode === 'recents') drawRecents();
@@ -1633,6 +1836,10 @@ if (q.get('tstage') && STAGE_GATE[q.get('tstage')] !== undefined) {   /* ?tstage
   pet.age_sec = STAGE_GATE[q.get('tstage')] + 1; pet.stage = q.get('tstage');
   pet.poop = +(q.get('tpoop') || 0);
 }
+const POSES = ['egg', 'wiggle', 'crack', 'hatch', 'idle', 'happy', 'walk', 'sleep', 'eat', 'cry', 'poop', 'sick'];
+const SHEET = q.get('tpose') === 'all';
+if (!SHEET && q.get('tpose')) pet.poseOverride = q.get('tpose');
+
 if (q.get('mode') === 'recents') {                    /* deep link: 造 3 個歷史出嚟睇 recents */
   ['tama', 'music', 'gal'].forEach(id => { running.unshift(id); });
   mode = 'recents';
