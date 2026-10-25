@@ -714,14 +714,26 @@ function chickMouth(kind, cy) {
   }
 }
 
-function chickHead(r, pose, t) {
-  const cy = -r - 3;                                   /* 抬高 3px，腳先露得出 */
-  const earH = Math.round(r * 1.0) + 5;
-  const earTop = cy - r - earH + 3;
+/* 每個階段唔同身型：耳朵長度 / 身體高矮 / 肚比例 / 頭頂毛 / 腳長 */
+const LOOK = {
+  baby:  { asp: 0.92, ear: 0.55, belly: 0.62, tuft: 0, leg: 2, wf: 1.00, scarf: false },
+  child: { asp: 1.00, ear: 0.85, belly: 0.55, tuft: 0, leg: 3, wf: 1.00, scarf: false },
+  teen:  { asp: 1.18, ear: 1.30, belly: 0.46, tuft: 1, leg: 4, wf: 0.94, scarf: false },
+  adult: { asp: 1.10, ear: 1.20, belly: 0.50, tuft: 2, leg: 5, wf: 1.02, scarf: true },
+};
+function stageLook(st) { return LOOK[st] || LOOK.baby; }
+
+function chickHead(r, pose, t, stage) {
+  const L = stageLook(stage);
+  const rw = Math.round(r * L.wf);                     /* 頭闊 */
+  const rb = Math.round(r * L.asp);                    /* 身高 */
+  const cy = -rb - 3;                                  /* 抬高 3px，腳先露得出 */
+  const earH = Math.max(5, Math.round(r * L.ear)) + 3;
+  const earTop = cy - rb - earH + 3;
 
   /* 長耳（左右各一隻，微微向外） */
   for (const sx of [-1, 1]) {
-    const bx = sx * 4;
+    const bx = sx * Math.max(3, Math.round(rw * 0.36));
     for (let i = 0; i < earH; i++) {
       const w = i < 2 ? 2 : 3;
       pxR(bx - Math.floor(w / 2), earTop + i, w, 1, PAL.line);
@@ -732,20 +744,36 @@ function chickHead(r, pose, t) {
     }
   }
 
-  pxBlob(0, cy, r + 1, r + 1, PAL.line);               /* 外框 */
-  pxBlob(0, cy, r, r, PAL.body);                       /* 身 */
-  pxBlob(0, cy + Math.round(r * 0.42), Math.round(r * 0.6), Math.round(r * 0.48), PAL.belly);
+  /* 頭頂呆毛（teen / adult） */
+  if (L.tuft) {
+    for (let k = 0; k < L.tuft; k++) {
+      const tx = -1 + k * 2;
+      pxR(tx, cy - rb - 2, 1, 4 + k, PAL.body);
+      pxR(tx, cy - rb - 3, 1, 1, PAL.line);
+    }
+  }
 
-  if (pose === 'sick') { ctx.globalAlpha = 0.28; pxBlob(0, cy, r, r, '#7FD3FF'); ctx.globalAlpha = 1; }
+  pxBlob(0, cy, rw + 1, rb + 1, PAL.line);             /* 外框 */
+  pxBlob(0, cy, rw, rb, PAL.body);                     /* 身 */
+  pxBlob(0, cy + Math.round(rb * 0.42), Math.round(rw * L.belly), Math.round(rb * L.belly), PAL.belly);
 
-  pxR(-r + 1, cy - 1, 3, 2, PAL.cheek);                 /* 腮紅 */
-  pxR(r - 4, cy - 1, 3, 2, PAL.cheek);
+  /* 頸巾（成年） */
+  if (L.scarf) {
+    pxR(-Math.round(rw * 0.5), cy + rb - 2, rw, 2, PAL.pink);
+    pxR(-1, cy + rb, 2, 3, PAL.pink);
+  }
+
+  if (pose === 'sick') { ctx.globalAlpha = 0.28; pxBlob(0, cy, rw, rb, '#7FD3FF'); ctx.globalAlpha = 1; }
+
+  pxR(-rw + 1, cy - 1, 3, 2, PAL.cheek);               /* 腮紅 */
+  pxR(rw - 4, cy - 1, 3, 2, PAL.cheek);
 
   /* 鬚（左右各兩條） */
   for (const sx of [-1, 1]) {
-    const wx = sx < 0 ? -(r + 3) : (r + 1);
+    const wx = sx < 0 ? -(rw + 3) : (rw + 1);
     pxR(wx, cy + 1, 3, 1, PAL.line);
     pxR(wx, cy + 4, 3, 1, PAL.line);
+    if (L.tuft) pxR(wx, cy + 7, 3, 1, PAL.line);       /* 大個仔多一條鬚 */
   }
 
   if (pose === 'sleep') chickEyes('closed', cy), chickMouth('flat', cy);
@@ -768,15 +796,15 @@ function chickHead(r, pose, t) {
     pxR(-r - 7, -9, 3, 1, PAL.grey);
     pxR(r + 5, -16, 3, 1, PAL.grey);
   } else {
-    pxR(-5, -3, 3, 3, PAL.shade);
-    pxR(3, -3, 3, 3, PAL.shade);
+    pxR(-5, -L.leg, 3, L.leg, PAL.shade);
+    pxR(3, -L.leg, 3, L.leg, PAL.shade);
   }
 
   /* 手（兔仔掌） */
-  if (pose === 'happy') { pxR(-r - 2, cy + 1, 2, 4, PAL.shade); pxR(r, cy + 1, 2, 4, PAL.shade); }
-  else if (pose === 'cry') { pxR(-r - 2, cy + 5, 2, 3, PAL.shade); pxR(r, cy + 5, 2, 3, PAL.shade); }
-  else if (pose === 'walk') { pxR(-r - 1, cy + 4, 2, 3, PAL.shade); pxR(r, cy + 3, 2, 3, PAL.shade); }
-  else { pxR(-r - 1, cy + 5, 2, 2, PAL.shade); pxR(r, cy + 5, 2, 2, PAL.shade); }
+  if (pose === 'happy') { pxR(-rw - 2, cy + 1, 2, 4, PAL.shade); pxR(rw, cy + 1, 2, 4, PAL.shade); }
+  else if (pose === 'cry') { pxR(-rw - 2, cy + 5, 2, 3, PAL.shade); pxR(rw, cy + 5, 2, 3, PAL.shade); }
+  else if (pose === 'walk') { pxR(-rw - 1, cy + 4, 2, 3, PAL.shade); pxR(rw, cy + 3, 2, 3, PAL.shade); }
+  else { pxR(-rw - 1, cy + 5, 2, 2, PAL.shade); pxR(rw, cy + 5, 2, 2, PAL.shade); }
 }
 
 function drawChick(t, poseArg, stageArg, cxArg, cyArg) {
@@ -799,14 +827,14 @@ function drawChick(t, poseArg, stageArg, cxArg, cyArg) {
 
   if (pose === 'sleep') {                            /* 躺平 + 被 */
     ctx.rotate(-0.12);
-    chickHead(r, pose, t);
+    chickHead(r, pose, t, stage);
     pxR(-r - 1, -3, (r + 1) * 2, 4, PAL.blanket);
     pxR(-r - 1, -3, (r + 1) * 2, 1, '#B9DCF2');
     ctx.restore();
     return;
   }
 
-  chickHead(r, pose, t);
+  chickHead(r, pose, t, stage);
 
   if (pose === 'happy') {
     heart(-r - 7, -r - 9, PAL.pink);
@@ -950,8 +978,8 @@ function drawPoop(x, y, n) {
  * ═══════════════════════════════════════════════════════════════════════════ */
 const TAMA = {
   HEART: 25,
-  HUNGER_STEP: 72,                    /* 1 心 ≈ 30 寵物分鐘 */
-  HAPPY_STEP: 80,
+  HUNGER_STEP: 1800,                  /* 1 心 = 30 寵物分鐘（=1800 寵物秒） */
+  HAPPY_STEP: 2000,                   /* 1 心 ≈ 33 寵物分鐘 */
   HATCH: 300,                         /* 蛋 5 分鐘 */
   CHILD_AT: 3900,                     /* 孵化後 65 分鐘 */
   YEAR: 1800,                         /* 1 歲 = 30 寵物分鐘 */
@@ -1034,7 +1062,7 @@ function addMistake(p, why) {
   tamaSay('!', 1.2);
 }
 function die(p, why) {
-  p.alive = false; p.anim = 'dead'; p.sleeping = false; p.call = ''; p.game = null;
+  p.alive = false; p.anim = 'dead'; p.sleeping = false; p.call = '';
   p.deathReason = why; p.deathAge = yearsOf(p); p.deathWeight = p.weight;
   E_('died: ' + why + ' @' + p.deathAge + 'y ' + p.deathWeight + 'g, mistakes ' + p.mistakes);
   savePet();
@@ -1367,7 +1395,6 @@ function drawTama(t) {
   /* 死亡 */
   if (!p.alive) { drawGrave(t, p); return; }
 
-  if (p.game) { drawMiniGame(t); return; }
 
   if (p.showStatus) {
     ctx.fillStyle = 'rgba(0,0,0,.88)'; ctx.fillRect(0, 56, W, H - 56);
@@ -1409,32 +1436,6 @@ function drawTama(t) {
   }
 }
 
-function drawMiniGame(t) {
-  const g = pet.game;
-  ctx.fillStyle = 'rgba(4,8,14,.92)'; ctx.fillRect(0, 0, W, H);
-  txt('ROUND ' + Math.min(5, g.round + 1) + ' / 5', W / 2, 92, 16, '#fff', 'center', 'middle', '700');
-  for (let i = 0; i < 5; i++) {
-    ctx.fillStyle = i < g.wins ? '#30D158' : (i < g.round ? '#FF453A' : '#2C2C2E');
-    ctx.beginPath(); ctx.arc(W / 2 - 48 + i * 24, 118, 5, 0, Math.PI * 2); ctx.fill();
-  }
-  ctx.save(); ctx.translate(W / 2, 320);
-  chickHead(13, 'happy', t);
-  if (g.phase === 'result') {
-    pxR(g.look < 0 ? -11 : 8, -18, 4, 3, PAL.eye);
-  }
-  ctx.restore();
-
-  if (g.phase === 'guess') {
-    uiButton(22, 356, 158, 62, '◀ LEFT', false);
-    uiButton(228, 356, 158, 62, 'RIGHT ▶', false);
-  } else {
-    txt(g.result === 'win' ? 'WIN!' : 'MISS', W / 2, 388, 26,
-        g.result === 'win' ? '#30D158' : '#FF453A', 'center', 'middle', '700');
-    txt('tap to continue', W / 2, 424, 11, C_DIM, 'center', 'middle');
-  }
-  txt('wins ' + g.wins + ' · 3+ = +1 heart', W / 2, 468, 11, C_DIM, 'center', 'middle');
-}
-
 /* ───────────────────────────── 動作（7 個 icon 對應原裝菜單） */
 function menuAct(i) {
   const p = pet;
@@ -1445,7 +1446,7 @@ function menuAct(i) {
   if (name !== 'FEED') p.submenu = '';
   switch (name) {
     case 'FEED':   p.submenu = 'feed'; I('menu FEED'); break;
-    case 'PLAY':   startGame(); break;
+    case 'PLAY':   doPlay(); break;
     case 'CLEAN':  doClean(); break;
     case 'LIGHT':  doLight(); break;
     case 'SCOLD':  doScold(); break;
@@ -1534,34 +1535,19 @@ function newEgg() {
   savePet();
 }
 
-function startGame() {
+function doPlay() {
   const p = pet;
-  if (p.sleeping) { tamaSay('zZ', 1.2); return; }
-  if (p.misbehaving) { tamaSay('!', 1.2); W_('refuses to play (misbehaving)'); return; }
+  if (!p.alive) return;
+  if (p.sleeping) { toast('SLEEPING'); tamaSay('zZ', 1.2); return; }
+  if (p.misbehaving) { toast('REFUSES'); tamaSay('!', 1.2); return; }
   p.anim = 'play'; p.animT = 0;
-  p.game = { round: 0, wins: 0, look: Math.random() < 0.5 ? -1 : 1, phase: 'guess', result: '' };
-  I('minigame start (5 rounds)');
-}
-
-function gameTap(x, y) {
-  const p = pet, g = p.game;
-  if (g.phase === 'result') {
-    if (g.round >= 5) {
-      const won = g.wins >= 3;
-      if (won) { p.happy = clamp(p.happy + TAMA.HEART); if (p.call === 'sad') clearCall(p, 'game'); }
-      p.weight = Math.max(TAMA.BASE_WEIGHT[p.stage] || 5, p.weight - 1);
-      I('game ' + g.wins + '/5 ' + (won ? 'WIN (+1 heart)' : 'lose') + ' · ' + p.weight + 'g');
-      p.game = null; savePet(); return;
-    }
-    g.phase = 'guess'; g.look = Math.random() < 0.5 ? -1 : 1;
-    return;
-  }
-  if (y < 340) return;
-  const guess = x < W / 2 ? -1 : 1;
-  if (guess === g.look) g.wins++;
-  g.result = guess === g.look ? 'win' : 'miss';
-  g.phase = 'result';
-  g.round++;
+  p.happy = clamp(p.happy + TAMA.HEART);
+  p.weight = Math.max(TAMA.BASE_WEIGHT[p.stage] || 5, p.weight - 1);
+  if (p.call === 'sad') clearCall(p, 'play');
+  tamaSay('♪', 1.4);
+  toast('PLAY · ' + heartCount(p.happy) + '/4 HAPPY');
+  I('play -> ' + heartCount(p.happy) + '/4 happy, ' + p.weight + 'g');
+  savePet();
 }
 
 /* ───────────────────── sprite sheet（?tpose=all）：12 個狀態一次過睇 */
@@ -1593,7 +1579,6 @@ Object.assign(appImpl, {
     tap(x, y) {
       const p = pet;
       if (!p.alive) { newEgg(); return; }
-      if (p.game) { gameTap(x, y); return; }
       if (p.showStatus) { p.showStatus = false; return; }
       if (p.submenu === 'feed') {
         if (y > 316 && y < 370) {
@@ -2286,17 +2271,18 @@ function runTests() {
   ok(branchFor({ mistakes: 0, discipline: 100, weight: 30 }) === 'good', 'good care -> good branch');
   ok(branchFor({ mistakes: 6, discipline: 0, weight: 30 }) === 'bad', 'many mistakes -> bad branch');
 
-  /* 小遊戲：贏 5 回合 +1 心、-1g */
+  /* 每個階段外型要唔同（唔止大小） */
+  ok(stageLook('baby').ear < stageLook('child').ear, 'baby ears shorter than child');
+  ok(stageLook('teen').ear > stageLook('child').ear, 'teen ears longer than child');
+  ok(stageLook('teen').asp !== stageLook('child').asp, 'teen is taller than child');
+  ok(stageLook('adult').scarf === true && stageLook('teen').scarf === false, 'adult wears a scarf');
+  ok(stageLook('teen').tuft > 0 && stageLook('baby').tuft === 0, 'teen has head tuft');
+
+  /* PLAY：一撳即有動畫 + 1 心 -1g（唔再估左右） */
   petInit(pet); pet.stage = 'child'; pet.age_sec = 4300; pet.weight = 20; pet.happy = 50;
-  startGame();
-  ok(!!pet.game && pet.game.round === 0, 'PLAY starts 5-round game');
-  for (let i = 0; i < 5; i++) {
-    pet.game.look = -1;      /* 固定望向 → 估左必贏 */
-    gameTap(10, 400);
-    gameTap(0, 420);
-  }
-  ok(pet.game === null, 'game ends after 5 rounds');
-  ok(pet.happy === 75 && pet.weight === 19, 'winning the game: +1 heart, -1g');
+  doPlay();
+  ok(pet.happy === 75 && pet.weight === 19, 'PLAY: +1 heart, -1g');
+  ok(pet.anim === 'play' && poseOf(pet) === 'happy', 'PLAY shows animation immediately');
 
   /* 瞓覺期間一律拒絕 */
   petInit(pet); pet.sleeping = true; pet.hunger = 20; pet.happy = 20;
@@ -2329,10 +2315,10 @@ function runTests() {
   tapCv(260, 438);                     /* SCOLD (第 5 個) */
   ok(pet.anim === 'scold', 'SCOLD plays scold animation');
 
-  pet.anim = 'idle'; pet.game = null;
+  pet.anim = 'idle';
   tapCv(89, 438);                      /* PLAY (第 2 個) */
-  ok(pet.anim === 'play' && !!pet.game, 'PLAY plays happy animation + starts game');
-  pet.game = null; pet.anim = 'idle';
+  ok(pet.anim === 'play', 'PLAY plays happy animation');
+  pet.anim = 'idle';
 
   tapCv(374, 438);                     /* STATUS (第 7 個) */
   ok(pet.showStatus === true, 'tap STATUS opens panel');
@@ -2347,6 +2333,13 @@ function runTests() {
   pet.sick = false;
   ok(pet.submenu === '', 'submenu closes after meal');
   pet.submenu = '';
+
+  /* 一餐要頂得住（×60 下唔會幾秒扣返） */
+  petInit(pet); pet.stage = 'child'; pet.age_sec = 4300; pet.hunger = 50; pet.hAcc = 0;
+  for (let i = 0; i < 60; i++) petTick(pet, 1);
+  ok(pet.hunger === 50, 'hunger holds for a pet-minute');
+  for (let i = 0; i < TAMA.HUNGER_STEP; i++) petTick(pet, 1);
+  ok(pet.hunger === 49, 'hunger drops 1 point per HUNGER_STEP');
 
   /* 蛋唔會郁 */
   petInit(pet); pet.stage = 'egg'; pet.age_sec = 100; pet.x = 120;
