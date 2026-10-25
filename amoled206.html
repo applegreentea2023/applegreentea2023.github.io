@@ -969,7 +969,7 @@ const TAMA = {
 };
 const CALL_LABEL = { hungry: 'HUNGRY', sad: 'UNHAPPY', light: 'LIGHTS', brat: 'BRAT' };
 const STAGE_LABEL = { egg: 'EGG', baby: 'BABY', child: 'CHILD', teen: 'TEEN', adult: 'ADULT', dead: 'DEAD' };
-const MENU = ['FEED', 'PLAY', 'DUCK', 'LIGHT', 'SCOLD', 'MED', 'STATUS'];
+const MENU = ['FEED', 'PLAY', 'CLEAN', 'LIGHT', 'SCOLD', 'MED', 'STATUS'];
 
 const heartCount = v => Math.ceil(v / TAMA.HEART);
 const yearsOf = p => Math.floor(p.age_sec / TAMA.YEAR);
@@ -1001,12 +1001,16 @@ function poseOf(p) {
          : (p.anim === 'wiggle' ? 'wiggle' : 'egg'));
   }
   if (p.sleeping) return 'sleep';
-  if (p.sick) return 'sick';
-  if (p.happy < 15) return 'cry';
+  /* 動作動畫（撳掣即刻見到）優先於狀態 */
   if (p.anim === 'eat') return 'eat';
   if (p.anim === 'play') return 'happy';
+  if (p.anim === 'clean') return 'happy';
+  if (p.anim === 'scold') return 'cry';
+  if (p.anim === 'med') return 'sick';
   if (p.anim === 'poop') return 'poop';
   if (p.anim === 'walk') return 'walk';
+  if (p.sick) return 'sick';
+  if (p.happy < 15) return 'cry';
   return 'idle';
 }
 
@@ -1130,9 +1134,10 @@ function tamaAI(dt, petObj) {
   /* 動作 */
   if (p.sleeping) { p.anim = 'sleep'; return; }
   p.animT += dt;
-  const busy = ['eat', 'play', 'poop', 'hatch', 'evo'].includes(p.anim);
+  const BUSY = { eat: 2.0, play: 2.4, clean: 1.6, scold: 2.0, med: 1.2, poop: 2.0, hatch: 2.0, evo: 2.0 };
+  const busy = BUSY[p.anim];
   if (busy) {
-    if (p.animT > 2.0) { p.anim = 'idle'; p.animT = 0; }
+    if (p.animT > busy) { p.anim = 'idle'; p.animT = 0; }
   } else if (p.sick) {
     p.anim = 'sick';
   } else if (p.anim === 'walk') {
@@ -1152,6 +1157,18 @@ function tamaAI(dt, petObj) {
 }
 
 /* ───────────────────────────── UI：心 / 體重 / 7 icon / 小遊戲 / 死亡畫面 */
+/* 4 角星（清潔／驚喜效果） */
+function star(x, y, r, col) {
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  ctx.moveTo(x, y - r);
+  ctx.quadraticCurveTo(x + r * 0.25, y - r * 0.25, x + r, y);
+  ctx.quadraticCurveTo(x + r * 0.25, y + r * 0.25, x, y + r);
+  ctx.quadraticCurveTo(x - r * 0.25, y + r * 0.25, x - r, y);
+  ctx.quadraticCurveTo(x - r * 0.25, y - r * 0.25, x, y - r);
+  ctx.fill();
+}
+
 function uiHeart(x, y, on, px) {
   const k = px || 2;
   const rows = [[1,0,1,1,0,1], [1,1,1,1,1,1], [1,1,1,1,1,1], [0,1,1,1,1,0], [0,0,1,1,0,0], [0,0,0,1,0,0]];
@@ -1172,7 +1189,7 @@ function menuGlyph(i, cx, cy, on) {
       ctx.beginPath(); ctx.arc(cx, cy, 9, 0, Math.PI * 2); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(cx - 9, cy); ctx.lineTo(cx + 9, cy);
       ctx.moveTo(cx, cy - 9); ctx.lineTo(cx, cy + 9); ctx.stroke(); break;
-    case 'DUCK':
+    case 'CLEAN':
       ctx.beginPath(); ctx.arc(cx - 2, cy - 1, 7, 0, Math.PI * 2); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(cx + 5, cy - 1); ctx.lineTo(cx + 11, cy + 1);
       ctx.lineTo(cx + 5, cy + 3); ctx.closePath(); ctx.fill(); break;
@@ -1316,6 +1333,24 @@ function drawTama(t) {
   }
 
   drawChick(t);
+  if (p.anim === 'play') {                         /* 玩耍：心心升起 */
+    const ph = (t % 900) / 900;
+    for (let k = 0; k < 3; k++) {
+      const o = (ph + k / 3) % 1;
+      ctx.globalAlpha = 0.25 + 0.75 * (1 - o);
+      uiHeart(p.x - 52 + k * 46, 300 - 60 - o * 54, true, 2);
+      ctx.globalAlpha = 1;
+    }
+  }
+  if (p.anim === 'clean') {                        /* 清潔：星星閃 */
+    const ph = (t % 600) / 600;
+    [[-58, -96, 0], [52, -120, 0.33], [-30, -140, 0.66]].forEach(([dx, dy, o]) => {
+      const a = 0.5 + 0.5 * Math.sin((ph + o) * Math.PI * 2);
+      ctx.globalAlpha = 0.35 + a * 0.65;
+      star(p.x + dx, 300 + dy, 5 + a * 3, '#FFE86B');
+      ctx.globalAlpha = 1;
+    });
+  }
 
   if (p.bubbleT > 0 && p.bubble) {
     txt(p.bubble, Math.min(W - 40, Math.max(40, p.x)) + 46, 372 - 118, 22, '#fff', 'center', 'middle', '600');
@@ -1411,7 +1446,7 @@ function menuAct(i) {
   switch (name) {
     case 'FEED':   p.submenu = 'feed'; I('menu FEED'); break;
     case 'PLAY':   startGame(); break;
-    case 'DUCK':   doDuck(); break;
+    case 'CLEAN':  doClean(); break;
     case 'LIGHT':  doLight(); break;
     case 'SCOLD':  doScold(); break;
     case 'MED':    doMed(); break;
@@ -1446,11 +1481,12 @@ function doSnack() {
   savePet();
 }
 
-function doDuck() {
+function doClean() {
   const p = pet;
-  if (!p.poop) { toast('ALREADY CLEAN'); I('duck: already clean'); return; }
+  if (!p.poop) { toast('ALREADY CLEAN'); tamaSay('?', 1); I('clean: already clean'); return; }
   toast('CLEANED ' + p.poop);
-  I('duck: cleaned ' + p.poop);
+  p.anim = 'clean'; p.animT = 0; p.bubble = '✦'; p.bubbleT = 1.4;
+  I('clean: cleaned ' + p.poop);
   p.poop = 0; p.poopT = 0;
   savePet();
 }
@@ -1468,6 +1504,7 @@ function doScold() {
   const p = pet;
   if (p.call !== 'brat') { toast('NOTHING TO SCOLD'); I('scold: nothing to scold'); tamaSay('?', 1); return; }
   toast('DISCIPLINE +25%');
+  p.anim = 'scold'; p.animT = 0;
   p.discipline = Math.min(100, p.discipline + 25);
   clearCall(p, 'scolded');
   I('scolded -> discipline ' + p.discipline + '%');
@@ -1478,10 +1515,15 @@ function doMed() {
   const p = pet;
   if (!p.sick) { toast('NOT SICK'); I('medicine: not sick'); return; }
   toast('MED ' + ((p.sickDoses || 0) + 1) + '/' + TAMA.CURE_DOSES);
+  p.anim = 'med'; p.animT = 0;
   p.sickDoses = (p.sickDoses || 0) + 1;
   tamaSay('+', 0.9);
   I('medicine ' + p.sickDoses + '/' + TAMA.CURE_DOSES);
-  if (p.sickDoses >= TAMA.CURE_DOSES) { p.sick = false; p.sickT = 0; p.sickDoses = 0; I('cured'); }
+  if (p.sickDoses >= TAMA.CURE_DOSES) {
+    p.sick = false; p.sickT = 0; p.sickDoses = 0;
+    p.anim = 'play'; p.animT = 0; p.bubble = '♥'; p.bubbleT = 1.4;   /* 醫好：開心 */
+    I('cured');
+  }
   savePet();
 }
 
@@ -1496,6 +1538,7 @@ function startGame() {
   const p = pet;
   if (p.sleeping) { tamaSay('zZ', 1.2); return; }
   if (p.misbehaving) { tamaSay('!', 1.2); W_('refuses to play (misbehaving)'); return; }
+  p.anim = 'play'; p.animT = 0;
   p.game = { round: 0, wins: 0, look: Math.random() < 0.5 ? -1 : 1, phase: 'guess', result: '' };
   I('minigame start (5 rounds)');
 }
@@ -2226,7 +2269,7 @@ function runTests() {
 
   /* 便便上限 4 + 醫病 */
   pet.poop = 4; pet.sick = true; pet.sickDoses = 0;
-  doDuck();
+  doClean();
   ok(pet.poop === 0, 'duck clears all poop');
   ok(pet.sick === true, 'cleaning poop does not cure sickness');
   doMed(); doMed();
@@ -2273,22 +2316,35 @@ function runTests() {
   };
   openApp('tama');
   petInit(pet); pet.stage = 'child'; pet.age_sec = 4300; pet.poop = 2;
-  tapCv(146, 438);                     /* DUCK (第 3 個 icon) */
-  ok(pet.poop === 0, 'tap DUCK icon clears poop (real pointer)');
+  tapCv(146, 438);                     /* CLEAN (第 3 個 icon) */
+  ok(pet.poop === 0, 'tap CLEAN icon clears poop (real pointer)');
+  ok(pet.anim === 'clean', 'CLEAN plays clean animation');
 
-  pet.sick = true; pet.sickDoses = 0;
+  pet.sick = true; pet.sickDoses = 0; pet.anim = 'idle';
   tapCv(317, 438);                     /* MED (第 6 個) */
   ok(pet.sickDoses === 1, 'tap MED icon gives a dose');
+  ok(pet.anim === 'med', 'MED plays medicine animation');
+
+  pet.call = 'brat'; pet.anim = 'idle';
+  tapCv(260, 438);                     /* SCOLD (第 5 個) */
+  ok(pet.anim === 'scold', 'SCOLD plays scold animation');
+
+  pet.anim = 'idle'; pet.game = null;
+  tapCv(89, 438);                      /* PLAY (第 2 個) */
+  ok(pet.anim === 'play' && !!pet.game, 'PLAY plays happy animation + starts game');
+  pet.game = null; pet.anim = 'idle';
 
   tapCv(374, 438);                     /* STATUS (第 7 個) */
   ok(pet.showStatus === true, 'tap STATUS opens panel');
   pet.showStatus = false;
 
-  pet.hunger = 40;
+  pet.hunger = 40; pet.sick = true; pet.anim = 'idle';
   tapCv(32, 438);                      /* FEED */
   ok(pet.submenu === 'feed', 'tap FEED opens MEAL/SNACK submenu');
   tapCv(76, 345);                      /* MEAL 按鈕 */
   ok(pet.hunger === 65, 'tap MEAL button feeds +1 heart');
+  ok(pet.anim === 'eat' && poseOf(pet) === 'eat', 'MEAL plays eating animation even while sick');
+  pet.sick = false;
   ok(pet.submenu === '', 'submenu closes after meal');
   pet.submenu = '';
 
@@ -2377,6 +2433,10 @@ const SHEET = q.get('tpose') === 'all';
 if (!SHEET && q.get('tpose')) pet.poseOverride = q.get('tpose');
 
 if (q.get('tlights') === '0') pet.lights = false;     /* ?tlights=0 預覽關燈 */
+if (q.get('tanim')) {                                /* ?tanim=eat|play|clean|scold|med 定格動畫 */
+  pet.stage = 'child'; pet.age_sec = 4300; pet.alive = true; pet.sleeping = false;
+  pet.anim = q.get('tanim'); pet.animT = -999;
+}
 if (q.get('tdead') === '1') {                        /* ?tdead=1 預覽死亡畫面 */
   pet.alive = false; pet.stage = 'dead'; pet.deathReason = q.get('why') || 'old age';
   pet.deathAge = +(q.get('age') || 9); pet.deathWeight = +(q.get('wt') || 34);
