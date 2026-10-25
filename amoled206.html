@@ -224,14 +224,14 @@ function petTick(p, dt) {
     }
   }
 }
-function petFeed(p)  { if (!p.alive || p.hunger >= PET_FULL) return false;
+function petFeed(p)  { if (!p.alive || p.sleeping || p.hunger >= PET_FULL) return false;
                        p.hunger = clamp(p.hunger + 25); p.happy = clamp(p.happy + 5);
                        p.energy = clamp(p.energy - 2); p.starve = 0; return true; }
-function petPlay(p)  { if (!p.alive || p.energy < 10) return false;
+function petPlay(p)  { if (!p.alive || p.sleeping || p.energy < 10) return false;
                        p.happy = clamp(p.happy + 25); p.energy = clamp(p.energy - 15);
                        p.hunger = clamp(p.hunger - 5); return true; }
 function petSleep(p) { if (!p.alive) return false; p.sleeping = !p.sleeping; return true; }
-function petStroke(p){ if (!p.alive) return false; p.happy = clamp(p.happy + 3); return true; }
+function petStroke(p){ if (!p.alive || p.sleeping) return false; p.happy = clamp(p.happy + 3); return true; }
 function petRestart(p){ petInit(p); }
 function petMood(p) {
   if (!p.alive) return 3;
@@ -1081,7 +1081,10 @@ Object.assign(appImpl, {
         }
       }
       /* 摸寵物 */
-      if (Math.abs(x - p.x) < 70 && y > 250 && y < 380) { petStroke(p); tamaSay('♥', 1.2); savePet(); }
+      if (Math.abs(x - p.x) < 70 && y > 250 && y < 380) {
+        if (p.sleeping) { tamaSay('zZ', 1); return; }
+        petStroke(p); tamaSay('♥', 1.2); savePet();
+      }
     },
   },
 
@@ -1534,12 +1537,14 @@ Object.assign(appImpl, {
 /* ═══════════════════════════════════════════════════ 寵物動作（掣 → 動畫） */
 function doFeed() {
   const p = pet;
-  if (!petFeed(p)) { tamaSay('!', 1); W_('FEED blocked'); return; }
+  if (p.sleeping) { tamaSay('zZ', 1.4); W_('FEED ignored: sleeping'); return; }
+  if (!petFeed(p)) { tamaSay('!', 1); W_('FEED blocked: already full'); return; }
   p.anim = 'eat'; p.animT = 0; tamaSay('♥', 1.4);
   I('FEED -> eat');
 }
 function doPlay() {
   const p = pet;
+  if (p.sleeping) { tamaSay('zZ', 1.4); W_('PLAY ignored: sleeping'); return; }
   if (!petPlay(p)) { tamaSay('x', 1); W_('PLAY blocked: energy ' + p.energy); return; }
   p.anim = 'play'; p.animT = 0; tamaSay('♪', 1.4);
   I('PLAY -> jump');
@@ -1761,6 +1766,13 @@ function runTests() {
   for (let i = 0; i < 400; i++) tamaAI(60);
   ok(pet.stage === 'baby', 'AI promotes to baby after 20s');
   ok(Math.abs(pet.x - x0) > 1, 'pet walks around the screen');
+
+  petInit(pet); pet.sleeping = true; pet.hunger = 20; pet.happy = 20; pet.energy = 50;
+  ok(!petFeed(pet), 'sleeping pet refuses FEED');
+  ok(!petPlay(pet), 'sleeping pet refuses PLAY');
+  ok(!petStroke(pet), 'sleeping pet refuses stroke');
+  ok(pet.hunger === 20 && pet.happy === 20, 'sleeping pet stats untouched');
+  pet.sleeping = false;
 
   pet.poopT = 39.9; pet.poop = 0; tamaAI(200);
   ok(pet.poop === 1, 'poop appears over time');
