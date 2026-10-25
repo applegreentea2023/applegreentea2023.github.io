@@ -379,7 +379,7 @@ const GEST_ZONE = 30;
 cv.addEventListener('pointerdown', ev => {
   if (!powered) { I('touch ignored (display off)'); return; }
   const { x, y } = localXY(ev);
-  cv.setPointerCapture(ev.pointerId);
+  try { cv.setPointerCapture(ev.pointerId); } catch (e) { /* 合成事件／已失效嘅 pointer */ }
 
   if (y > H - GEST_ZONE) {
     Object.assign(GEST, { active: true, y0: y, x0: x, t0: performance.now(), dy: 0, closed: false });
@@ -1010,6 +1010,7 @@ function poseOf(p) {
 }
 
 function tamaSay(s, secs) { pet.bubble = s; pet.bubbleT = secs || 1.6; }
+function toast(msg) { pet.toast = msg; pet.toastAt = performance.now(); }
 
 function raiseCall(p, reason) {
   if (p.call || !p.alive || p.stage === 'egg') return;
@@ -1185,6 +1186,63 @@ function uiButton(x, y, w, h, label, on) {
   txt(label, x + w / 2, y + h / 2 + 1, 16, '#fff', 'center', 'middle', '600');
 }
 
+/* 墓碑（死亡畫面）：草丘 + 圓頂石碑 + 十字 + 小花 */
+function drawGrave(t, p) {
+  ctx.fillStyle = 'rgba(0,0,0,.78)'; ctx.fillRect(0, 0, W, H);
+  const cx = W / 2, base = 352;
+
+  /* 草丘 */
+  ctx.fillStyle = '#1E3A2C';
+  ctx.beginPath(); ctx.ellipse(cx, base, 96, 26, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#26543A';
+  ctx.beginPath(); ctx.ellipse(cx, base - 4, 78, 18, 0, 0, Math.PI * 2); ctx.fill();
+
+  /* 石碑：圓頂 */
+  const sx = cx - 44, sy = base - 118, sw = 88, sh = 118;
+  ctx.fillStyle = '#3A3A40';
+  ctx.beginPath();
+  ctx.moveTo(sx - 5, base + 2);
+  ctx.lineTo(sx - 5, sy + 34);
+  ctx.quadraticCurveTo(cx, sy - 26, sx + sw + 5, sy + 34);
+  ctx.lineTo(sx + sw + 5, base + 2);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#6E6E78';
+  ctx.beginPath();
+  ctx.moveTo(sx, base);
+  ctx.lineTo(sx, sy + 34);
+  ctx.quadraticCurveTo(cx, sy - 20, sx + sw, sy + 34);
+  ctx.lineTo(sx + sw, base);
+  ctx.closePath(); ctx.fill();
+  /* 石紋 */
+  ctx.fillStyle = '#5E5E68';
+  ctx.fillRect(sx + 8, sy + 26, 26, 3);
+  ctx.fillRect(sx + 48, sy + 44, 30, 3);
+
+  /* 十字 */
+  ctx.fillStyle = '#2E2E34';
+  ctx.fillRect(cx - 4, sy + 22, 8, 44);
+  ctx.fillRect(cx - 16, sy + 34, 32, 8);
+  txt('R.I.P', cx, sy + 84, 16, '#2E2E34', 'center', 'middle', '700');
+
+  /* 兩朵小花（5 瓣） */
+  [[cx - 64, base - 4, '#FF93AC'], [cx + 66, base, '#FFD93D']].forEach(([fx, fy, col]) => {
+    ctx.fillStyle = '#26543A'; ctx.fillRect(fx, fy, 2, 14);
+    ctx.fillStyle = '#3E7A52'; ctx.fillRect(fx - 4, fy + 6, 4, 2);
+    for (let k = 0; k < 5; k++) {
+      const a = k * Math.PI * 2 / 5 - Math.PI / 2;
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.arc(fx + 1 + Math.cos(a) * 5, fy - 4 + Math.sin(a) * 5, 3, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = '#FFF3C4';
+    ctx.beginPath(); ctx.arc(fx + 1, fy - 4, 2.4, 0, Math.PI * 2); ctx.fill();
+  });
+
+  /* 資訊 */
+  txt((p.deathAge || 0) + ' YEARS · ' + (p.deathWeight || 0) + 'g', W / 2, 380, 13, '#fff', 'center', 'middle', '600');
+  txt('cause: ' + (p.deathReason || '?'), W / 2, 400, 11, C_DIM, 'center', 'middle');
+  txt('tap / B = new egg', W / 2, 430, 12.5, '#0A84FF', 'center', 'middle', '600');
+}
+
 function drawTama(t) {
   const p = pet;
 
@@ -1234,16 +1292,7 @@ function drawTama(t) {
   }
 
   /* 死亡 */
-  if (!p.alive) {
-    ctx.fillStyle = 'rgba(0,0,0,.74)'; ctx.fillRect(0, 0, W, H);
-    rr(W / 2 - 46, 248, 92, 88, 8, '#5A5A60');
-    rr(W / 2 - 53, 236, 106, 16, 6, '#6E6E75');
-    txt('R.I.P', W / 2, 296, 19, '#2A2A2E', 'center', 'middle', '700');
-    txt((p.deathAge || 0) + ' years · ' + (p.deathWeight || 0) + 'g', W / 2, 356, 13, '#fff', 'center', 'middle');
-    txt('cause: ' + (p.deathReason || '?'), W / 2, 376, 11, C_DIM, 'center', 'middle');
-    txt('tap / B = new egg', W / 2, 412, 13, '#0A84FF', 'center', 'middle', '600');
-    return;
-  }
+  if (!p.alive) { drawGrave(t, p); return; }
 
   if (p.game) { drawMiniGame(t); return; }
 
@@ -1267,6 +1316,14 @@ function drawTama(t) {
     uiButton(18, 322, 116, 46, 'MEAL', false);
     uiButton(147, 322, 116, 46, 'SNACK', false);
     uiButton(276, 322, 116, 46, 'BACK', false);
+  }
+
+  /* toast：每個動作嘅即時回饋 */
+  if (p.toast && performance.now() - (p.toastAt || 0) < 1400) {
+    ctx.font = '600 12px Arial, Helvetica, sans-serif';
+    const w = ctx.measureText(p.toast).width + 26;
+    rr(W / 2 - w / 2, 382, w, 24, 12, 'rgba(0,0,0,.72)');
+    txt(p.toast, W / 2, 395, 12, '#fff', 'center', 'middle', '600');
   }
 
   /* 7 icon 菜單 */
@@ -1326,31 +1383,35 @@ function menuAct(i) {
 
 function doMeal() {
   const p = pet; p.submenu = '';
-  if (p.sleeping) { tamaSay('zZ', 1.2); W_('meal ignored: sleeping'); return; }
-  if (p.misbehaving) { tamaSay('!', 1.2); W_('refuses meal (misbehaving)'); return; }
-  if (p.hunger >= 100) { tamaSay('x', 1.2); W_('refuses meal: 4 hearts full'); return; }
+  if (p.sleeping) { toast('SLEEPING'); tamaSay('zZ', 1.2); return; }
+  if (p.misbehaving) { toast('REFUSES'); tamaSay('!', 1.2); return; }
+  if (p.hunger >= 100) { toast('FULL'); tamaSay('x', 1.2); return; }
   p.hunger = clamp(p.hunger + TAMA.HEART);
   p.weight = Math.min(99, p.weight + 1);
   if (p.call === 'hungry') clearCall(p, 'meal');
   p.anim = 'eat'; p.animT = 0; tamaSay('♥', 1.4);
+  toast('MEAL · ' + heartCount(p.hunger) + '/4 HEARTS');
   I('meal -> ' + heartCount(p.hunger) + '/4 hearts, ' + p.weight + 'g');
   savePet();
 }
 
 function doSnack() {
   const p = pet; p.submenu = '';
-  if (p.sleeping) { tamaSay('zZ', 1.2); W_('snack ignored: sleeping'); return; }
+  if (p.sleeping) { toast('SLEEPING'); tamaSay('zZ', 1.2); return; }
+  toast('SNACK +1 HEART');
   p.happy = clamp(p.happy + TAMA.HEART);
   p.weight = Math.min(99, p.weight + 2);
   if (p.call === 'sad') clearCall(p, 'snack');
   p.anim = 'eat'; p.animT = 0; tamaSay('♪', 1.4);
+  toast('SNACK · ' + heartCount(p.happy) + '/4 HAPPY');
   I('snack -> ' + heartCount(p.happy) + '/4 happy, ' + p.weight + 'g');
   savePet();
 }
 
 function doDuck() {
   const p = pet;
-  if (!p.poop) { I('duck: already clean'); return; }
+  if (!p.poop) { toast('ALREADY CLEAN'); I('duck: already clean'); return; }
+  toast('CLEANED ' + p.poop);
   I('duck: cleaned ' + p.poop);
   p.poop = 0; p.poopT = 0;
   savePet();
@@ -1359,6 +1420,7 @@ function doDuck() {
 function doLight() {
   const p = pet;
   p.lights = !p.lights;
+  toast(p.lights ? 'LIGHTS ON' : 'LIGHTS OFF');
   I('lights ' + (p.lights ? 'on' : 'off'));
   if (!p.lights && p.call === 'light') clearCall(p, 'lights off');
   savePet();
@@ -1366,7 +1428,8 @@ function doLight() {
 
 function doScold() {
   const p = pet;
-  if (p.call !== 'brat') { I('scold: nothing to scold'); tamaSay('?', 1); return; }
+  if (p.call !== 'brat') { toast('NOTHING TO SCOLD'); I('scold: nothing to scold'); tamaSay('?', 1); return; }
+  toast('DISCIPLINE +25%');
   p.discipline = Math.min(100, p.discipline + 25);
   clearCall(p, 'scolded');
   I('scolded -> discipline ' + p.discipline + '%');
@@ -1375,7 +1438,8 @@ function doScold() {
 
 function doMed() {
   const p = pet;
-  if (!p.sick) { I('medicine: not sick'); return; }
+  if (!p.sick) { toast('NOT SICK'); I('medicine: not sick'); return; }
+  toast('MED ' + ((p.sickDoses || 0) + 1) + '/' + TAMA.CURE_DOSES);
   p.sickDoses = (p.sickDoses || 0) + 1;
   tamaSay('+', 0.9);
   I('medicine ' + p.sickDoses + '/' + TAMA.CURE_DOSES);
@@ -1458,7 +1522,9 @@ Object.assign(appImpl, {
       }
       if (y >= 408 && y <= 468) {
         const i = Math.max(0, Math.min(MENU.length - 1, Math.floor((x - 6) / 57)));
-        if (p.menu === i) menuAct(i); else { p.menu = i; p.submenu = ''; }
+        p.menu = i;
+        p.submenu = '';
+        menuAct(i);                       /* 一撳即做 */
         return;
       }
       if (Math.abs(x - p.x) < 70 && y > 250 && y < 380) {
@@ -1971,6 +2037,11 @@ bootEl.addEventListener('pointerleave', () => { if (bootDown) bootPress(false); 
 
 addEventListener('keydown', e => {
   if (e.repeat) return;
+  if (mode === 'app' && current === 'tama') {
+    if (e.key === 'a' || e.key === 'A') { pet.menu = (pet.menu + MENU.length - 1) % MENU.length; return; }
+    if (e.key === 'b' || e.key === 'B') { menuAct(pet.menu); return; }
+    if (e.key === 'c' || e.key === 'C') { pet.submenu = ''; pet.showStatus = false; return; }
+  }
   if (e.key === 'b' || e.key === 'B') bootPress(true);
   if (e.key === 'p' || e.key === 'P') pwrDown();
   if (e.key === 'Escape') goHome();
@@ -2150,6 +2221,32 @@ function runTests() {
 
   petInit(pet);
 
+  /* 真 pointer 打落 canvas：證明 7 粒 icon 掣有反應 */
+  const tapCv = (dx, dy) => {
+    const r = cv.getBoundingClientRect();
+    const mk = tt => new PointerEvent(tt, { clientX: r.left + dx * (r.width / W),
+      clientY: r.top + dy * (r.height / H), bubbles: true, pointerId: 9, isPrimary: true });
+    cv.dispatchEvent(mk('pointerdown'));
+    cv.dispatchEvent(mk('pointerup'));
+  };
+  openApp('tama');
+  petInit(pet); pet.stage = 'child'; pet.age_sec = 4300; pet.poop = 2;
+  tapCv(146, 438);                     /* DUCK (第 3 個 icon) */
+  ok(pet.poop === 0, 'tap DUCK icon clears poop (real pointer)');
+
+  pet.sick = true; pet.sickDoses = 0;
+  tapCv(317, 438);                     /* MED (第 6 個) */
+  ok(pet.sickDoses === 1, 'tap MED icon gives a dose');
+
+  tapCv(374, 438);                     /* STATUS (第 7 個) */
+  ok(pet.showStatus === true, 'tap STATUS opens panel');
+  pet.showStatus = false;
+
+  pet.hunger = 40;
+  tapCv(32, 438);                      /* FEED */
+  ok(pet.submenu === 'feed', 'tap FEED opens MEAL/SNACK submenu');
+  pet.submenu = '';
+
   appImpl.set.draw();
   ok(appImpl.set._rows.length >= 5, 'Settings root has WLAN/Sound/Display/Power/Storage/About');
   appImpl.set.tap(200, appImpl.set._rows[0].y + 20);
@@ -2224,6 +2321,10 @@ const POSES = ['egg', 'wiggle', 'crack', 'hatch', 'idle', 'happy', 'walk', 'slee
 const SHEET = q.get('tpose') === 'all';
 if (!SHEET && q.get('tpose')) pet.poseOverride = q.get('tpose');
 
+if (q.get('tdead') === '1') {                        /* ?tdead=1 預覽死亡畫面 */
+  pet.alive = false; pet.stage = 'dead'; pet.deathReason = q.get('why') || 'old age';
+  pet.deathAge = +(q.get('age') || 9); pet.deathWeight = +(q.get('wt') || 34);
+}
 if (q.get('mode') === 'recents') {                    /* deep link: 造 3 個歷史出嚟睇 recents */
   ['tama', 'music', 'gal'].forEach(id => { running.unshift(id); });
   mode = 'recents';
